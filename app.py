@@ -330,6 +330,24 @@ Include ALL numbers {batch_start + 1} to {batch_end}."""
         # Remove empty collections
         all_collections = {name: ids for name, ids in collections_dict.items() if ids}
         
+        # CRITICAL: Final deduplication check
+        seen_products = set()
+        deduplicated_collections = {}
+        
+        for collection_name, indices in all_collections.items():
+            unique_indices = []
+            for idx in indices:
+                if idx not in seen_products:
+                    unique_indices.append(idx)
+                    seen_products.add(idx)
+                else:
+                    print(f"  ⚠️ Removing duplicate: Product {idx} from '{collection_name}'")
+            
+            if unique_indices:
+                deduplicated_collections[collection_name] = unique_indices
+        
+        all_collections = deduplicated_collections
+        
         # Final count
         total_assigned = sum(len(ids) for ids in all_collections.values())
         
