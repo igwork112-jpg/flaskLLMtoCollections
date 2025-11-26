@@ -248,15 +248,45 @@ IMPORTANT:
                 # Skip this batch and continue
                 continue
             
-            # Merge batch results into all_collections
+            # Track which products have been assigned to prevent duplicates
+            assigned_in_batch = set()
+            
+            # Merge batch results into all_collections (with duplicate prevention)
             for collection_name, indices in batch_collections.items():
                 if collection_name not in all_collections:
                     all_collections[collection_name] = []
-                all_collections[collection_name].extend(indices)
+                
+                # Only add products that haven't been assigned yet
+                for idx in indices:
+                    if idx not in assigned_in_batch:
+                        all_collections[collection_name].append(idx)
+                        assigned_in_batch.add(idx)
+                    else:
+                        print(f"  Warning: Product {idx} already assigned in this batch, skipping duplicate")
             
             print(f"  Batch complete: {len(batch_collections)} collections found")
         
         print(f"Classification complete: {len(all_collections)} total collections")
+        
+        # CRITICAL: Remove duplicates across all collections
+        seen_products = set()
+        deduplicated_collections = {}
+        
+        for collection_name, indices in all_collections.items():
+            unique_indices = []
+            for idx in indices:
+                if idx not in seen_products:
+                    unique_indices.append(idx)
+                    seen_products.add(idx)
+                else:
+                    print(f"  Removing duplicate: Product {idx} from '{collection_name}' (already in another collection)")
+            
+            if unique_indices:  # Only keep collections with products
+                deduplicated_collections[collection_name] = unique_indices
+        
+        all_collections = deduplicated_collections
+        total_unique = sum(len(indices) for indices in all_collections.values())
+        print(f"After deduplication: {total_unique} unique products across {len(all_collections)} collections")
         
         # Format for display
         formatted_collections = {}
