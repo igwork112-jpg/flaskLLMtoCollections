@@ -5,6 +5,7 @@ import json
 import os
 import time
 import uuid
+import re
 from datetime import timedelta, datetime
 from dotenv import load_dotenv
 from threading import Lock
@@ -267,13 +268,30 @@ Include ALL numbers {batch_start + 1} to {batch_end}."""
                 )
                 
                 text = resp.choices[0].message.content.strip()
-                if "```" in text:
-                    text = text.split("```")[1].replace("json", "").strip()
-                text = text.replace(",\n}", "\n}").replace(",]", "]")
+                
+                # Extract JSON from markdown
+                if "```json" in text:
+                    text = text.split("```json")[1].split("```")[0].strip()
+                elif "```" in text:
+                    text = text.split("```")[1].split("```")[0].strip()
+                
+                # Clean up common JSON issues
+                text = text.replace(",\n}", "\n}")  # Trailing comma in object
+                text = text.replace(",\n]", "\n]")  # Trailing comma in array
+                text = text.replace(",}", "}")      # Trailing comma before }
+                text = text.replace(",]", "]")      # Trailing comma before ]
+                
+                # Remove any trailing commas before closing braces (more aggressive)
+                text = re.sub(r',(\s*[}\]])', r'\1', text)
                 
                 ai_response = json.loads(text)
+            except json.JSONDecodeError as e:
+                print(f"  ⚠️ JSON parsing failed: {e}")
+                print(f"  Problematic JSON (first 500 chars): {text[:500] if 'text' in locals() else 'N/A'}")
+                ai_response = {}
             except Exception as e:
-                print(f"  ⚠️ AI failed: {e}")
+                print(f"  ⚠️ AI call failed: {e}")
+                ai_response = {}
             
             # Process EACH product in this batch
             for i in range(batch_count):
