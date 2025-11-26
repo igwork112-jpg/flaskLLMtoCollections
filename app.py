@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request, jsonify, session, Response, stream_with_context
+from flask_session import Session
 import requests
 import openai
 import json
@@ -12,6 +13,12 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
+
+# Configure server-side session to handle large data
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SESSION_FILE_DIR'] = './flask_session'
+app.config['SESSION_PERMANENT'] = True
+Session(app)
 
 # Get OpenAI key from environment
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
@@ -103,8 +110,12 @@ def fetch_products():
         
         print(f"Pagination complete: {page_count + 1} pages fetched, {len(all_products)} products matched")
         
+        # Store products in session
         session['products'] = all_products
         session.permanent = True
+        session.modified = True  # Force session save
+        
+        print(f"Stored {len(all_products)} products in session")
         
         return jsonify({
             "success": True,
@@ -124,6 +135,8 @@ def fetch_products():
 def classify_products():
     try:
         products = session.get('products', [])
+        
+        print(f"DEBUG: Retrieved {len(products)} products from session")
         
         if not products:
             return jsonify({"success": False, "error": "No products found. Fetch products first."}), 400
