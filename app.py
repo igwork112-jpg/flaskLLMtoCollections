@@ -18,6 +18,8 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_FILE_DIR'] = './flask_session'
 app.config['SESSION_PERMANENT'] = True
+app.config['SESSION_USE_SIGNER'] = False
+app.config['SESSION_KEY_PREFIX'] = 'shopify_classifier:'
 Session(app)
 
 # Get OpenAI key from environment
