@@ -1,12 +1,13 @@
 from flask import Flask, render_template, request, jsonify, session, Response, stream_with_context
-from flask_session import Session
 import requests
 import openai
 import json
 import os
 import time
-from datetime import timedelta
+import uuid
+from datetime import timedelta, datetime
 from dotenv import load_dotenv
+from threading import Lock
 
 # Load environment variables
 load_dotenv()
@@ -15,24 +16,47 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
-# Configure server-side session to handle large data
-# Create session directory if it doesn't exist
-session_dir = os.environ.get('SESSION_DIR', '/tmp/flask_session')
-os.makedirs(session_dir, exist_ok=True)
-
-app.config['SESSION_TYPE'] = 'filesystem'
-app.config['SESSION_FILE_DIR'] = session_dir
-app.config['SESSION_PERMANENT'] = True
-app.config['SESSION_USE_SIGNER'] = False
-app.config['SESSION_KEY_PREFIX'] = 'shopify_classifier:'
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = False  # Set to True if using HTTPS
-Session(app)
-
-print(f"Session storage configured at: {session_dir}")
-
 # Get OpenAI key from environment
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+
+# In-memory data store (backup solution for large data)
+# This avoids cookie size limits completely
+data_store = {}
+store_lock = Lock()
+
+def cleanup_old_sessions():
+    """Remove sessions older than 24 hours"""
+    with store_lock:
+        now = datetime.now()
+        expired = [sid for sid, data in data_store.items() 
+                   if (now - data.get('created_at', now)).total_seconds() > 86400]
+        for sid in expired:
+            del data_store[sid]
+            
+def get_session_id():
+    """Get or create session ID"""
+    if 'session_id' not in session:
+        session['session_id'] = str(uuid.uuid4())
+        session.permanent = True
+    return session['session_id']
+
+def store_data(key, value):
+    """Store data in memory store"""
+    cleanup_old_sessions()
+    sid = get_session_id()
+    with store_lock:
+        if sid not in data_store:
+            data_store[sid] = {'created_at': datetime.now()}
+        data_store[sid][key] = value
+        
+def get_data(key, default=None):
+    """Retrieve data from memory store"""
+    sid = get_session_id()
+    with store_lock:
+        return data_store.get(sid, {}).get(key, default)
+
+print(f"✓ In-memory data store initialized (no cookie size limits)")
+print(f"✓ Session cleanup: automatic (24 hour expiry)")
 
 @app.route('/')
 def index():
@@ -52,9 +76,9 @@ def fetch_products():
         # Clean up shop URL - remove https://, http://, trailing slashes
         shop_url = shop_url.replace('https://', '').replace('http://', '').rstrip('/')
         
-        # Store credentials in session
-        session['shop_url'] = shop_url
-        session['access_token'] = access_token
+        # Store credentials in memory (not in cookie)
+        store_data('shop_url', shop_url)
+        store_data('access_token', access_token)
         
         url = f"https://{shop_url}/admin/api/2024-01/products.json"
         headers = {
@@ -121,12 +145,10 @@ def fetch_products():
         
         print(f"Pagination complete: {page_count + 1} pages fetched, {len(all_products)} products matched")
         
-        # Store products in session
-        session['products'] = all_products
-        session.permanent = True
-        session.modified = True  # Force session save
+        # Store products in memory (not in cookie)
+        store_data('products', all_products)
         
-        print(f"Stored {len(all_products)} products in session")
+        print(f"✓ Stored {len(all_products)} products in memory store")
         
         return jsonify({
             "success": True,
@@ -145,9 +167,9 @@ def fetch_products():
 @app.route('/api/classify', methods=['POST'])
 def classify_products():
     try:
-        products = session.get('products', [])
+        products = get_data('products', [])
         
-        print(f"DEBUG: Retrieved {len(products)} products from session")
+        print(f"DEBUG: Retrieved {len(products)} products from memory store")
         
         if not products:
             return jsonify({"success": False, "error": "No products found. Fetch products first."}), 400
@@ -223,7 +245,7 @@ IMPORTANT: Use the exact numbers shown in the list above."""
                 for idx in indices if 1 <= idx <= len(products)
             ]
         
-        session['classified_collections'] = all_collections
+        store_data('classified_collections', all_collections)
         
         return jsonify({
             "success": True,
@@ -241,10 +263,10 @@ IMPORTANT: Use the exact numbers shown in the list above."""
 def update_shopify_stream():
     def generate():
         try:
-            products = session.get('products', [])
-            collections = session.get('classified_collections', {})
-            shop_url = session.get('shop_url', '')
-            access_token = session.get('access_token', '')
+            products = get_data('products', [])
+            collections = get_data('classified_collections', {})
+            shop_url = get_data('shop_url', '')
+            access_token = get_data('access_token', '')
             
             if not collections:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'No classification data'})}\n\n"
