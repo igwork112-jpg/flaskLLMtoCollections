@@ -194,8 +194,14 @@ def classify_products():
             # Create titles text for this batch
             titles_text = "\n".join([f"{batch_start + i + 1}. {p['title']}" for i, p in enumerate(batch_products)])
             
-            prompt = f"""Analyze these product titles and group them into collections based on their primary category or product type.
-Return a JSON object where keys are collection names and values are arrays of title numbers.
+            prompt = f"""Analyze these product titles and assign EACH product to EXACTLY ONE collection based on its PRIMARY purpose.
+
+CRITICAL RULES:
+1. Each product number must appear in ONLY ONE collection
+2. Choose the MOST SPECIFIC and RELEVANT category for each product
+3. Do NOT duplicate products across multiple collections
+4. Group similar products together
+5. Use clear, descriptive collection names
 
 Titles:
 {titles_text}
@@ -207,7 +213,10 @@ Example format:
   "Storage Solutions": [1, 7]
 }}
 
-IMPORTANT: Use the exact numbers shown in the list above."""
+IMPORTANT: 
+- Use the exact numbers shown in the list above
+- Each number should appear ONLY ONCE in the entire JSON
+- Total products in all collections should equal the number of titles provided"""
 
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
