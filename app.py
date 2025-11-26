@@ -16,12 +16,20 @@ app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-producti
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
 # Configure server-side session to handle large data
+# Create session directory if it doesn't exist
+session_dir = os.environ.get('SESSION_DIR', '/tmp/flask_session')
+os.makedirs(session_dir, exist_ok=True)
+
 app.config['SESSION_TYPE'] = 'filesystem'
-app.config['SESSION_FILE_DIR'] = './flask_session'
+app.config['SESSION_FILE_DIR'] = session_dir
 app.config['SESSION_PERMANENT'] = True
 app.config['SESSION_USE_SIGNER'] = False
 app.config['SESSION_KEY_PREFIX'] = 'shopify_classifier:'
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True if using HTTPS
 Session(app)
+
+print(f"Session storage configured at: {session_dir}")
 
 # Get OpenAI key from environment
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
