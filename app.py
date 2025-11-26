@@ -285,6 +285,14 @@ Include ALL numbers {batch_start + 1} to {batch_end}."""
                 text = re.sub(r',(\s*[}\]])', r'\1', text)
                 
                 ai_response = json.loads(text)
+                
+                # Check if AI returned products outside this batch range
+                expected_range = set(range(batch_start + 1, batch_end + 1))
+                ai_products = set(int(k) for k in ai_response.keys() if k.isdigit())
+                unexpected = ai_products - expected_range
+                if unexpected:
+                    print(f"  ⚠️ AI returned products outside batch range: {sorted(unexpected)[:10]}")
+                
             except json.JSONDecodeError as e:
                 print(f"  ⚠️ JSON parsing failed: {e}")
                 print(f"  Problematic JSON (first 500 chars): {text[:500] if 'text' in locals() else 'N/A'}")
@@ -306,6 +314,8 @@ Include ALL numbers {batch_start + 1} to {batch_end}."""
                 if product_idx not in product_to_collection:
                     product_to_collection[product_idx] = collection
                     collections_dict[collection].append(product_idx)
+                else:
+                    print(f"  ⚠️ Product {product_idx} already assigned, skipping")
             
             print(f"  ✓ Assigned {batch_count} products")
             print(f"  Total assigned: {len(product_to_collection)}/{total_products}")
@@ -348,14 +358,24 @@ Include ALL numbers {batch_start + 1} to {batch_end}."""
         
         all_collections = deduplicated_collections
         
-        # Final count
+        # Final count and verification
         total_assigned = sum(len(ids) for ids in all_collections.values())
+        
+        # Double-check for duplicates
+        all_product_ids = []
+        for ids in all_collections.values():
+            all_product_ids.extend(ids)
+        
+        unique_count = len(set(all_product_ids))
+        if unique_count != total_assigned:
+            print(f"❌ CRITICAL: Duplicates detected! {total_assigned} total, {unique_count} unique")
+            print(f"   Duplicates: {total_assigned - unique_count}")
         
         print(f"\n{'='*60}")
         print(f"CLASSIFICATION COMPLETE")
         print(f"{'='*60}")
         print(f"Input: {total_products} products")
-        print(f"Output: {total_assigned} products")
+        print(f"Output: {total_assigned} products ({unique_count} unique)")
         print(f"Collections: {len(all_collections)}")
         
         if total_assigned == total_products:
@@ -408,13 +428,35 @@ def update_shopify_stream():
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Missing credentials'})}\n\n"
                 return
             
+            # CRITICAL: Deduplicate collections before processing
+            seen_products = set()
+            clean_collections = {}
+            duplicates_removed = 0
+            
+            for collection_name, indices in collections.items():
+                unique_indices = []
+                for idx in indices:
+                    if idx not in seen_products:
+                        unique_indices.append(idx)
+                        seen_products.add(idx)
+                    else:
+                        duplicates_removed += 1
+                
+                if unique_indices:
+                    clean_collections[collection_name] = unique_indices
+            
+            collections = clean_collections
+            
+            if duplicates_removed > 0:
+                yield f"data: {json.dumps({'type': 'info', 'message': f'Removed {duplicates_removed} duplicate products'})}\n\n"
+            
             headers = {
                 "X-Shopify-Access-Token": access_token,
                 "Content-Type": "application/json"
             }
             
             success_count = 0
-            total_products = sum(len(indices) for indices in collections.values())
+            total_products = len(seen_products)  # Use unique count
             
             yield f"data: {json.dumps({'type': 'start', 'total': total_products, 'collections': len(collections)})}\n\n"
             
