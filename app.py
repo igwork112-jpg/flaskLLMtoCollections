@@ -179,154 +179,206 @@ def classify_products():
         
         openai.api_key = OPENAI_API_KEY
         
-        # Handle large product lists by batching
-        # Adaptive batch size based on total products
-        if len(products) > 1000:
-            batch_size = 100  # Smaller batches for very large datasets
-        elif len(products) > 500:
-            batch_size = 150
-        else:
-            batch_size = 200
-        
-        all_collections = {}
-        
-        # Track ALL products to ensure each is assigned exactly once
         total_products = len(products)
-        assigned_products = set()  # Global tracker across all batches
-        unassigned_products = set(range(1, total_products + 1))  # Start with all products
+        print(f"\n{'='*60}")
+        print(f"STARTING CLASSIFICATION: {total_products} products")
+        print(f"{'='*60}\n")
         
-        total_batches = (total_products + batch_size - 1) // batch_size
-        print(f"Classifying {total_products} products in {total_batches} batches of ~{batch_size}...")
+        # STEP 1: Get collection names from AI by analyzing a sample
+        print("Step 1: Analyzing products to determine collection categories...")
+        sample_size = min(50, total_products)
+        sample_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_size)])
         
-        for batch_start in range(0, total_products, batch_size):
-            batch_end = min(batch_start + batch_size, total_products)
-            batch_products = products[batch_start:batch_end]
-            
-            print(f"Processing batch {batch_start//batch_size + 1}: products {batch_start+1} to {batch_end}")
-            
-            # Create titles text for this batch
-            titles_text = "\n".join([f"{batch_start + i + 1}. {p['title']}" for i, p in enumerate(batch_products)])
-            
-            prompt = f"""You are categorizing products. Each product MUST be assigned to EXACTLY ONE collection.
+        collection_prompt = f"""Analyze these product titles and suggest 5-15 logical collection categories.
 
-STRICT REQUIREMENTS:
-1. Every product number must appear EXACTLY ONCE
-2. NO product can be in multiple collections
-3. Choose the PRIMARY/MAIN purpose of each product
-4. Create logical, specific collection names
-5. If a product fits multiple categories, pick the MOST RELEVANT one
+Sample products:
+{sample_titles}
 
-Products to categorize:
-{titles_text}
+Return ONLY a JSON array of collection names (no explanations):
+["Collection Name 1", "Collection Name 2", "Collection Name 3"]
 
-Return ONLY a JSON object in this exact format (no markdown, no explanations):
-{{
-  "Collection Name 1": [1, 5, 8],
-  "Collection Name 2": [2, 3, 4],
-  "Collection Name 3": [6, 7, 9]
-}}"""
+Make categories specific and relevant to the products shown."""
 
-            # Adaptive max_tokens based on batch size
-            max_response_tokens = min(4000, batch_size * 20)  # ~20 tokens per product
-            
+        try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a product categorization expert. Return ONLY valid JSON with no trailing commas. Do not include any explanatory text, only the JSON object."},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": "You are a product categorization expert. Return ONLY a JSON array."},
+                    {"role": "user", "content": collection_prompt}
                 ],
-                temperature=0.2,
-                max_tokens=max_response_tokens
+                temperature=0.3,
+                max_tokens=500
             )
             
             result = response.choices[0].message.content.strip()
-            
-            # Extract JSON from markdown if present
             if "```json" in result:
                 result = result.split("```json")[1].split("```")[0].strip()
             elif "```" in result:
                 result = result.split("```")[1].split("```")[0].strip()
             
-            # Clean up common JSON issues
-            result = result.replace(",\n}", "\n}")  # Remove trailing commas
-            result = result.replace(",\n]", "\n]")  # Remove trailing commas in arrays
+            suggested_collections = json.loads(result)
+            print(f"✓ Suggested {len(suggested_collections)} collections: {', '.join(suggested_collections[:5])}...")
+        except Exception as e:
+            print(f"⚠️ Could not get collection suggestions: {e}")
+            suggested_collections = ["General Products"]
+        
+        # STEP 2: Process each product individually to ensure 100% coverage
+        print(f"\nStep 2: Classifying all {total_products} products individually...")
+        
+        # Initialize collections
+        all_collections = {name: [] for name in suggested_collections}
+        all_collections["Other"] = []  # Fallback collection
+        
+        # Process in batches for efficiency, but handle each product
+        batch_size = 50  # Smaller batches for individual classification
+        total_batches = (total_products + batch_size - 1) // batch_size
+        
+        for batch_num in range(total_batches):
+            batch_start = batch_num * batch_size
+            batch_end = min(batch_start + batch_size, total_products)
+            batch_products = products[batch_start:batch_end]
             
+            print(f"\nBatch {batch_num + 1}/{total_batches}: Processing products {batch_start + 1}-{batch_end}")
+            
+            # Create product list for this batch
+            batch_titles = "\n".join([f"{batch_start + i + 1}. {p['title']}" for i, p in enumerate(batch_products)])
+            
+            classify_prompt = f"""Assign each product to the BEST MATCHING collection from this list:
+{json.dumps(list(all_collections.keys()))}
+
+Products to classify:
+{batch_titles}
+
+Return a JSON object mapping each product NUMBER to its collection name:
+{{
+  "1": "Collection Name",
+  "2": "Collection Name",
+  "3": "Other"
+}}
+
+CRITICAL: Include ALL product numbers from {batch_start + 1} to {batch_end}."""
+
             try:
-                batch_collections = json.loads(result)
-            except json.JSONDecodeError as e:
-                print(f"❌ JSON parsing error in batch {batch_start//batch_size + 1}: {str(e)}")
-                print(f"Problematic JSON: {result[:500]}...")
-                print(f"⚠️ Batch failed - {len(batch_products)} products will be marked as unassigned")
-                # Don't continue - let these products stay in unassigned_products
-                continue
-            
-            # Process batch results with strict duplicate checking
-            batch_assigned = set()
-            batch_duplicates = []
-            
-            for collection_name, indices in batch_collections.items():
-                if collection_name not in all_collections:
-                    all_collections[collection_name] = []
+                response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "Return ONLY valid JSON. Map every product number to a collection name."},
+                        {"role": "user", "content": classify_prompt}
+                    ],
+                    temperature=0.2,
+                    max_tokens=2000
+                )
                 
-                for idx in indices:
-                    # Check if already assigned globally
-                    if idx in assigned_products:
-                        batch_duplicates.append(idx)
-                        print(f"  ⚠️ Duplicate: Product {idx} already assigned globally, SKIPPING")
-                        continue
+                result = response.choices[0].message.content.strip()
+                if "```json" in result:
+                    result = result.split("```json")[1].split("```")[0].strip()
+                elif "```" in result:
+                    result = result.split("```")[1].split("```")[0].strip()
+                
+                result = result.replace(",\n}", "\n}").replace(",\n]", "\n]")
+                assignments = json.loads(result)
+                
+                # Process each product in this batch
+                assigned_count = 0
+                for i, product in enumerate(batch_products):
+                    product_idx = batch_start + i + 1
+                    product_key = str(product_idx)
                     
-                    # Check if duplicate within this batch
-                    if idx in batch_assigned:
-                        batch_duplicates.append(idx)
-                        print(f"  ⚠️ Duplicate: Product {idx} appears twice in batch, SKIPPING")
-                        continue
-                    
-                    # Valid assignment
-                    all_collections[collection_name].append(idx)
-                    assigned_products.add(idx)
-                    batch_assigned.add(idx)
-                    unassigned_products.discard(idx)
+                    # Get assignment from AI
+                    if product_key in assignments:
+                        collection_name = assignments[product_key]
+                        
+                        # Ensure collection exists
+                        if collection_name not in all_collections:
+                            all_collections[collection_name] = []
+                        
+                        # Assign product
+                        all_collections[collection_name].append(product_idx)
+                        assigned_count += 1
+                    else:
+                        # AI missed this product - assign to "Other"
+                        print(f"  ⚠️ Product {product_idx} not in AI response, assigning to 'Other'")
+                        all_collections["Other"].append(product_idx)
+                        assigned_count += 1
+                
+                progress_pct = (batch_end / total_products) * 100
+                print(f"  ✓ Assigned {assigned_count}/{len(batch_products)} products")
+                print(f"  Progress: {batch_end}/{total_products} ({progress_pct:.1f}%)")
+                
+            except Exception as e:
+                print(f"  ❌ Batch failed: {e}")
+                # Fallback: assign all products in this batch to "Other"
+                for i in range(len(batch_products)):
+                    product_idx = batch_start + i + 1
+                    all_collections["Other"].append(product_idx)
+                print(f"  ⚠️ Assigned {len(batch_products)} products to 'Other' as fallback")
             
-            progress_pct = (len(assigned_products) / total_products) * 100
-            print(f"  Batch complete: {len(batch_assigned)} products assigned, {len(batch_duplicates)} duplicates skipped")
-            print(f"  Progress: {len(assigned_products)}/{total_products} ({progress_pct:.1f}%)")
-            
-            # Rate limiting for large datasets (avoid OpenAI API limits)
-            if total_batches > 5:
-                time.sleep(1)  # 1 second delay between batches for large datasets
+            # Rate limiting
+            if total_batches > 5 and batch_num < total_batches - 1:
+                time.sleep(0.5)
         
-        print(f"\n{'='*60}")
-        print(f"Classification complete: {len(all_collections)} collections created")
-        print(f"Products assigned: {len(assigned_products)} of {total_products}")
-        print(f"Products remaining: {len(unassigned_products)}")
+        # STEP 3: Verification - ensure every product is assigned exactly once
+        print(f"\nStep 3: Verifying classification...")
         
-        # Final verification and cleanup
-        if unassigned_products:
-            unassigned_count = len(unassigned_products)
-            print(f"\n⚠️ {unassigned_count} products were NOT classified:")
-            
-            # Show sample of unassigned (limit output for large datasets)
-            sample_size = min(10, unassigned_count)
-            for idx in sorted(list(unassigned_products))[:sample_size]:
-                print(f"  - Product {idx}: {products[idx-1]['title'][:80]}")
-            if unassigned_count > sample_size:
-                print(f"  ... and {unassigned_count - sample_size} more")
-            
-            # Auto-assign to Uncategorized
-            all_collections["Uncategorized"] = sorted(list(unassigned_products))
-            assigned_products.update(unassigned_products)
-            print(f"✓ Added {unassigned_count} unassigned products to 'Uncategorized' collection")
+        # Remove empty collections
+        all_collections = {name: indices for name, indices in all_collections.items() if indices}
         
-        # Final sanity check
+        # Count total assignments
+        all_assigned_indices = []
+        for collection_name, indices in all_collections.items():
+            all_assigned_indices.extend(indices)
+        
+        # Check for duplicates
+        duplicates = []
+        seen = set()
+        for idx in all_assigned_indices:
+            if idx in seen:
+                duplicates.append(idx)
+            seen.add(idx)
+        
+        if duplicates:
+            print(f"⚠️ Found {len(duplicates)} duplicate assignments - removing...")
+            # Remove duplicates (keep first occurrence)
+            for collection_name in all_collections:
+                unique_indices = []
+                for idx in all_collections[collection_name]:
+                    if idx not in seen or idx == all_collections[collection_name][0]:
+                        unique_indices.append(idx)
+                all_collections[collection_name] = unique_indices
+        
+        # Check for missing products
+        expected_indices = set(range(1, total_products + 1))
+        assigned_indices = set(all_assigned_indices)
+        missing_indices = expected_indices - assigned_indices
+        
+        if missing_indices:
+            print(f"⚠️ Found {len(missing_indices)} missing products - adding to 'Other'...")
+            if "Other" not in all_collections:
+                all_collections["Other"] = []
+            all_collections["Other"].extend(sorted(missing_indices))
+        
+        # Final count
         total_assigned = sum(len(indices) for indices in all_collections.values())
-        print(f"\n{'='*60}")
-        print(f"✓ FINAL RESULT: {total_assigned} products in {len(all_collections)} collections")
         
-        if total_assigned != total_products:
-            print(f"❌ ERROR: Expected {total_products} products but got {total_assigned}")
+        print(f"\n{'='*60}")
+        print(f"CLASSIFICATION COMPLETE")
+        print(f"{'='*60}")
+        print(f"Total products: {total_products}")
+        print(f"Products assigned: {total_assigned}")
+        print(f"Collections created: {len(all_collections)}")
+        
+        if total_assigned == total_products:
+            print(f"✓ SUCCESS: All {total_products} products classified!")
         else:
-            print(f"✓ SUCCESS: All {total_products} products classified correctly")
+            print(f"❌ ERROR: Expected {total_products} but got {total_assigned}")
+            print(f"   Difference: {abs(total_products - total_assigned)}")
+        
         print(f"{'='*60}\n")
+        
+        # Show collection summary
+        for collection_name, indices in sorted(all_collections.items(), key=lambda x: len(x[1]), reverse=True):
+            print(f"  {collection_name}: {len(indices)} products")
+        print()
         
         # Format for display
         formatted_collections = {}
