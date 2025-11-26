@@ -221,20 +221,32 @@ IMPORTANT:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a product categorization expert. Return only valid JSON."},
+                    {"role": "system", "content": "You are a product categorization expert. Return ONLY valid JSON with no trailing commas. Do not include any explanatory text, only the JSON object."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3
+                temperature=0.2,
+                max_tokens=2000
             )
             
             result = response.choices[0].message.content.strip()
             
+            # Extract JSON from markdown if present
             if "```json" in result:
                 result = result.split("```json")[1].split("```")[0].strip()
             elif "```" in result:
                 result = result.split("```")[1].split("```")[0].strip()
-                
-            batch_collections = json.loads(result)
+            
+            # Clean up common JSON issues
+            result = result.replace(",\n}", "\n}")  # Remove trailing commas
+            result = result.replace(",\n]", "\n]")  # Remove trailing commas in arrays
+            
+            try:
+                batch_collections = json.loads(result)
+            except json.JSONDecodeError as e:
+                print(f"JSON parsing error in batch {batch_start//batch_size + 1}: {str(e)}")
+                print(f"Problematic JSON: {result[:500]}...")
+                # Skip this batch and continue
+                continue
             
             # Merge batch results into all_collections
             for collection_name, indices in batch_collections.items():
