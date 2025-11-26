@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shopify Product Classifier</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .card h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-right: 10px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(56, 239, 125, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .log-area {
+            background: #f8f9fa;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 300px;
+            max-height: 500px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        .log-entry {
+            margin-bottom: 8px;
+        }
+
+        .log-success {
+            color: #28a745;
+        }
+
+        .log-error {
+            color: #dc3545;
+        }
+
+        .log-info {
+            color: #17a2b8;
+        }
+
+        .collection-group {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+        }
+
+        .collection-title {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+        }
+
+        .product-item {
+            padding: 8px 0;
+            color: #555;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .product-item:last-child {
+            border-bottom: none;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .progress-container {
+            width: 100%;
+            background: #e0e0e0;
+            border-radius: 8px;
+            height: 30px;
+            margin: 20px 0;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .stat-box {
+            flex: 1;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛍️ Shopify Product Classifier</h1>
+            <p>AI-powered product organization for your store</p>
+        </div>
+
+        <div class="card">
+            <h2>Configuration</h2>
+            <div class="form-group">
+                <label for="shop_url">Shop URL</label>
+                <input type="text" id="shop_url" placeholder="your-store.myshopify.com" value="mahad-9800.myshopify.com">
+            </div>
+            <div class="form-group">
+                <label for="access_token">Admin API Access Token</label>
+                <input type="password" id="access_token" placeholder="shpat_...">
+            </div>
+            <div class="form-group">
+                <label for="openai_key">OpenAI API Key</label>
+                <input type="password" id="openai_key" placeholder="sk-...">
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Actions</h2>
+            <div class="form-group">
+                <label for="tag">Product Tag to Filter</label>
+                <input type="text" id="tag" placeholder="e.g., featured, new-arrival">
+            </div>
+            <button class="btn btn-primary" onclick="fetchProducts()" id="fetch-btn">
+                <span id="fetch-spinner" class="spinner hidden"></span>
+                <span id="fetch-text">Fetch Products</span>
+            </button>
+            <button class="btn btn-primary" onclick="classifyProducts()" id="classify-btn" disabled>
+                <span id="classify-spinner" class="spinner hidden"></span>
+                <span id="classify-text">Classify Products</span>
+            </button>
+            <button class="btn btn-success" onclick="startUpdate()" id="update-btn" disabled>
+                <span id="update-spinner" class="spinner hidden"></span>
+                <span id="update-text">Update Shopify</span>
+            </button>
+        </div>
+
+        <div class="stats hidden" id="stats">
+            <div class="stat-box">
+                <div class="stat-number" id="product-count">0</div>
+                <div class="stat-label">Products Found</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-number" id="collection-count">0</div>
+                <div class="stat-label">Collections</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Results</h2>
+            <div class="progress-container hidden" id="progress-container">
+                <div class="progress-bar" id="progress-bar">0%</div>
+            </div>
+            <div class="log-area" id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        function log(message, type = 'info') {
+            const logArea = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = message;
+            logArea.appendChild(entry);
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        function setLoading(button, isLoading) {
+            const spinner = document.getElementById(`${button}-spinner`);
+            const btnElement = document.getElementById(`${button}-btn`);
+            
+            if (isLoading) {
+                spinner.classList.remove('hidden');
+                if (btnElement) btnElement.disabled = true;
+            } else {
+                spinner.classList.add('hidden');
+                if (btnElement) btnElement.disabled = false;
+            }
+        }
+
+        async function fetchProducts() {
+            clearLog();
+            
+            const shop_url = document.getElementById('shop_url').value.trim();
+            const access_token = document.getElementById('access_token').value.trim();
+            const openai_key = document.getElementById('openai_key').value.trim();
+            const tag = document.getElementById('tag').value.trim();
+
+            if (!shop_url || !access_token || !tag) {
+                log('✗ Please fill in Shop URL, Access Token, and Tag', 'error');
+                return;
+            }
+
+            setLoading('fetch', true);
+            log('🔄 Connecting to Shopify...', 'info');
+
+            try {
+                const response = await fetch('/api/fetch-products', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ shop_url, access_token, openai_key, tag })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    log(`✓ Found ${data.count} products with tag "${tag}"`, 'success');
+                    
+                    if (data.count === 0) {
+                        log('⚠ No products found with that tag. Try a different tag.', 'error');
+                    } else {
+                        data.products.forEach((p, i) => {
+                            log(`  ${i + 1}. ${p.title}`, 'info');
+                        });
+                        
+                        document.getElementById('product-count').textContent = data.count;
+                        document.getElementById('stats').classList.remove('hidden');
+                        document.getElementById('classify-btn').disabled = false;
+                        
+                        log('\n✓ Ready to classify. Click "Classify Products"', 'success');
+                    }
+                } else {
+                    log(`✗ Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`✗ Network Error: ${error.message}`, 'error');
+                log('Check your internet connection and try again.', 'error');
+            } finally {
+                setLoading('fetch', false);
+            }
+        }
+
+        async function classifyProducts() {
+            setLoading('classify', true);
+            log('\n🤖 Sending to AI for classification...', 'info');
+
+            try {
+                const response = await fetch('/api/classify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    log(`\n✓ Classified into ${Object.keys(data.collections).length} collections:\n`, 'success');
+                    
+                    const logArea = document.getElementById('log');
+                    
+                    Object.entries(data.collections).forEach(([collectionName, products]) => {
+                        const collectionDiv = document.createElement('div');
+                        collectionDiv.className = 'collection-group';
+                        
+                        const title = document.createElement('div');
+                        title.className = 'collection-title';
+                        title.textContent = `📁 ${collectionName} (${products.length} products)`;
+                        collectionDiv.appendChild(title);
+                        
+                        products.forEach(p => {
+                            const productDiv = document.createElement('div');
+                            productDiv.className = 'product-item';
+                            productDiv.textContent = `${p.index}. ${p.title}`;
+                            collectionDiv.appendChild(productDiv);
+                        });
+                        
+                        logArea.appendChild(collectionDiv);
+                    });
+                    
+                    document.getElementById('collection-count').textContent = Object.keys(data.collections).length;
+                    document.getElementById('update-btn').disabled = false;
+                    
+                    log('\n✓ Ready to update Shopify. Click "Update Shopify"', 'success');
+                } else {
+                    log(`✗ Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`✗ Error: ${error.message}`, 'error');
+            } finally {
+                setLoading('classify', false);
+            }
+        }
+
+        function startUpdate() {
+            updateShopify();
+        }
+
+        async function updateShopify() {
+            setLoading('update', true);
+            
+            // Clear previous results
+            const logArea = document.getElementById('log');
+            logArea.innerHTML = '';
+            
+            // Show progress bar
+            const progressContainer = document.getElementById('progress-container');
+            const progressBar = document.getElementById('progress-bar');
+            progressContainer.classList.remove('hidden');
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+
+            let currentCollectionDiv = null;
+            let processedCount = 0;
+            let totalCount = 0;
+            const collectionDivs = {};
+
+            try {
+                const eventSource = new EventSource('/api/update-shopify-stream');
+                
+                eventSource.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'start') {
+                        totalCount = data.total;
+                        log(`🚀 Starting update: ${data.collections} collections, ${data.total} products\n`, 'info');
+                    }
+                    
+                    else if (data.type === 'collection_start') {
+                        log(`\n📁 Processing collection: ${data.name}`, 'info');
+                    }
+                    
+                    else if (data.type === 'collection_created') {
+                        // Create collection group box
+                        const collectionDiv = document.createElement('div');
+                        collectionDiv.className = 'collection-group';
+                        collectionDiv.style.marginBottom = '20px';
+                        
+                        const title = document.createElement('div');
+                        title.className = 'collection-title';
+                        title.style.fontSize = '1.2rem';
+                        title.style.marginBottom = '10px';
+                        title.textContent = `📁 Collection: ${data.name}`;
+                        collectionDiv.appendChild(title);
+                        
+                        logArea.appendChild(collectionDiv);
+                        collectionDivs[data.name] = collectionDiv;
+                        currentCollectionDiv = collectionDiv;
+                        
+                        log(`   ✓ Collection ready (ID: ${data.id})`, 'success');
+                    }
+                    
+                    else if (data.type === 'product_added') {
+                        processedCount++;
+                        const progress = Math.round((processedCount / totalCount) * 100);
+                        progressBar.style.width = progress + '%';
+                        progressBar.textContent = progress + '%';
+                        
+                        const collectionDiv = collectionDivs[data.collection];
+                        if (collectionDiv) {
+                            const productDiv = document.createElement('div');
+                            productDiv.className = 'product-item';
+                            productDiv.style.padding = '8px 0';
+                            
+                            if (data.status === 'success') {
+                                productDiv.style.color = '#28a745';
+                                productDiv.innerHTML = `<strong>✓</strong> Added: ${data.product}`;
+                            } else {
+                                productDiv.style.color = '#dc3545';
+                                productDiv.innerHTML = `<strong>✗</strong> Failed: ${data.product}`;
+                            }
+                            
+                            collectionDiv.appendChild(productDiv);
+                        }
+                        
+                        logArea.scrollTop = logArea.scrollHeight;
+                    }
+                    
+                    else if (data.type === 'collection_error') {
+                        log(`   ✗ Failed to create collection: ${data.name}`, 'error');
+                    }
+                    
+                    else if (data.type === 'complete') {
+                        progressBar.style.width = '100%';
+                        progressBar.textContent = '✓ Complete';
+                        progressBar.style.background = 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)';
+                        
+                        log(`\n✅ SUCCESS: ${data.success_count} out of ${data.total} products added`, 'success');
+                        log(`🎉 All collections created and products organized!`, 'success');
+                        
+                        setTimeout(() => {
+                            progressContainer.classList.add('hidden');
+                        }, 5000);
+                        
+                        eventSource.close();
+                        setLoading('update', false);
+                    }
+                    
+                    else if (data.type === 'error') {
+                        log(`✗ Error: ${data.message}`, 'error');
+                        progressContainer.classList.add('hidden');
+                        eventSource.close();
+                        setLoading('update', false);
+                    }
+                };
+                
+                eventSource.onerror = function(error) {
+                    console.error('EventSource error:', error);
+                    log(`✗ Connection error. Please try again.`, 'error');
+                    progressContainer.classList.add('hidden');
+                    eventSource.close();
+                    setLoading('update', false);
+                };
+                
+            } catch (error) {
+                progressContainer.classList.add('hidden');
+                log(`✗ Error: ${error.message}`, 'error');
+                setLoading('update', false);
+            }
+        }
+    </script>
+</body>
+</html>
