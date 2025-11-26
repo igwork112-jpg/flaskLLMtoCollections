@@ -194,29 +194,29 @@ def classify_products():
             # Create titles text for this batch
             titles_text = "\n".join([f"{batch_start + i + 1}. {p['title']}" for i, p in enumerate(batch_products)])
             
-            prompt = f"""Analyze these product titles and assign EACH product to EXACTLY ONE collection based on its PRIMARY purpose.
+            prompt = f"""You are categorizing products. Each product MUST be assigned to EXACTLY ONE collection.
 
-CRITICAL RULES:
-1. Each product number must appear in ONLY ONE collection
-2. Choose the MOST SPECIFIC and RELEVANT category for each product
-3. Do NOT duplicate products across multiple collections
-4. Group similar products together
-5. Use clear, descriptive collection names
+STRICT REQUIREMENTS:
+1. Every product number (1-{len(batch_products)}) must appear EXACTLY ONCE
+2. NO product can be in multiple collections
+3. Choose the PRIMARY/MAIN purpose of each product
+4. Create logical, specific collection names
+5. If a product fits multiple categories, pick the MOST RELEVANT one
 
-Titles:
+Products to categorize:
 {titles_text}
 
-Example format:
+Return ONLY a JSON object in this exact format (no markdown, no explanations):
 {{
-  "Bike Storage": [12, 14],
-  "Flooring Tools": [2, 3, 4],
-  "Storage Solutions": [1, 7]
+  "Collection Name 1": [1, 5, 8],
+  "Collection Name 2": [2, 3, 4],
+  "Collection Name 3": [6, 7, 9]
 }}
 
-IMPORTANT: 
-- Use the exact numbers shown in the list above
-- Each number should appear ONLY ONCE in the entire JSON
-- Total products in all collections should equal the number of titles provided"""
+VERIFY before responding:
+- Total numbers in all arrays = {len(batch_products)}
+- No number appears twice
+- All numbers from 1 to {len(batch_products)} are included"""
 
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -271,6 +271,7 @@ IMPORTANT:
         # CRITICAL: Remove duplicates across all collections
         seen_products = set()
         deduplicated_collections = {}
+        duplicates_found = []
         
         for collection_name, indices in all_collections.items():
             unique_indices = []
@@ -279,6 +280,7 @@ IMPORTANT:
                     unique_indices.append(idx)
                     seen_products.add(idx)
                 else:
+                    duplicates_found.append(idx)
                     print(f"  Removing duplicate: Product {idx} from '{collection_name}' (already in another collection)")
             
             if unique_indices:  # Only keep collections with products
@@ -287,6 +289,28 @@ IMPORTANT:
         all_collections = deduplicated_collections
         total_unique = sum(len(indices) for indices in all_collections.values())
         print(f"After deduplication: {total_unique} unique products across {len(all_collections)} collections")
+        
+        # Check for missing products
+        all_product_indices = set(range(1, len(products) + 1))
+        missing_products = all_product_indices - seen_products
+        
+        if missing_products:
+            print(f"⚠️ WARNING: {len(missing_products)} products were not classified by AI:")
+            for idx in sorted(missing_products)[:10]:  # Show first 10
+                print(f"  - Product {idx}: {products[idx-1]['title'][:80]}")
+            if len(missing_products) > 10:
+                print(f"  ... and {len(missing_products) - 10} more")
+        
+        if duplicates_found:
+            print(f"⚠️ {len(duplicates_found)} duplicate classifications were removed")
+        
+        # Auto-assign missing products to "Uncategorized" collection
+        if missing_products:
+            all_collections["Uncategorized"] = sorted(list(missing_products))
+            print(f"✓ Added {len(missing_products)} missing products to 'Uncategorized' collection")
+            total_unique = len(products)
+        
+        print(f"✓ Final result: {total_unique} of {len(products)} products classified")
         
         # Format for display
         formatted_collections = {}
