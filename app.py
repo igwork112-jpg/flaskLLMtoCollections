@@ -4,6 +4,7 @@ import requests
 import openai
 import json
 import os
+import time
 from datetime import timedelta
 from dotenv import load_dotenv
 
@@ -275,9 +276,11 @@ def update_shopify_stream():
                         
                         if add_product_to_collection(product["id"], collection_id, shop_url, headers):
                             success_count += 1
-                            yield f"data: {json.dumps({'type': 'product_added', 'collection': collection_name, 'product': product['title'], 'status': 'success'})}\n\n"
+                            result = json.dumps({'type': 'product_added', 'collection': collection_name, 'product': product['title'], 'status': 'success'})
+                            yield f"data: {result}\n\n"
                         else:
-                            yield f"data: {json.dumps({'type': 'product_added', 'collection': collection_name, 'product': product['title'], 'status': 'failed'})}\n\n"
+                            result = json.dumps({'type': 'product_added', 'collection': collection_name, 'product': product['title'], 'status': 'failed'})
+                            yield f"data: {result}\n\n"
             
             yield f"data: {json.dumps({'type': 'complete', 'success_count': success_count, 'total': total_products})}\n\n"
             
@@ -290,55 +293,122 @@ def update_shopify_stream():
     return response
 
 def create_or_get_collection(collection_name, shop_url, headers):
-    try:
-        search_url = f"https://{shop_url}/admin/api/2024-01/custom_collections.json"
-        response = requests.get(search_url, headers=headers, timeout=30)
-        response.raise_for_status()
-        
-        collections = response.json().get("custom_collections", [])
-        for col in collections:
-            if col["title"].lower() == collection_name.lower():
-                print(f"Found existing collection: {collection_name} (ID: {col['id']})")
-                return col["id"]
-        
-        create_url = f"https://{shop_url}/admin/api/2024-01/custom_collections.json"
-        payload = {
-            "custom_collection": {
-                "title": collection_name,
-                "published": True
+    """Create or get collection with retry logic"""
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            # Search for existing collection
+            search_url = f"https://{shop_url}/admin/api/2024-01/custom_collections.json"
+            response = requests.get(search_url, headers=headers, timeout=30)
+            
+            # Handle rate limiting
+            if response.status_code == 429:
+                retry_after = int(response.headers.get('Retry-After', 2))
+                print(f"Rate limit hit, waiting {retry_after} seconds...")
+                time.sleep(retry_after)
+                continue
+            
+            response.raise_for_status()
+            
+            collections = response.json().get("custom_collections", [])
+            for col in collections:
+                if col["title"].lower() == collection_name.lower():
+                    print(f"Found existing collection: {collection_name} (ID: {col['id']})")
+                    return col["id"]
+            
+            # Create new collection
+            create_url = f"https://{shop_url}/admin/api/2024-01/custom_collections.json"
+            payload = {
+                "custom_collection": {
+                    "title": collection_name,
+                    "published": True
+                }
             }
-        }
-        response = requests.post(create_url, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-        
-        collection_id = response.json()["custom_collection"]["id"]
-        print(f"Created new collection: {collection_name} (ID: {collection_id})")
-        return collection_id
-        
-    except Exception as e:
-        print(f"Error creating/getting collection {collection_name}: {str(e)}")
-        return None
+            
+            time.sleep(0.5)  # Rate limiting
+            response = requests.post(create_url, headers=headers, json=payload, timeout=30)
+            
+            if response.status_code == 429:
+                retry_after = int(response.headers.get('Retry-After', 2))
+                print(f"Rate limit hit, waiting {retry_after} seconds...")
+                time.sleep(retry_after)
+                continue
+            
+            response.raise_for_status()
+            
+            collection_id = response.json()["custom_collection"]["id"]
+            print(f"Created new collection: {collection_name} (ID: {collection_id})")
+            return collection_id
+            
+        except requests.exceptions.Timeout:
+            print(f"Timeout creating collection {collection_name}, attempt {attempt + 1}/{max_retries}")
+            if attempt < max_retries - 1:
+                time.sleep(2 * (attempt + 1))
+                continue
+                
+        except Exception as e:
+            print(f"Error creating/getting collection {collection_name}: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(2 * (attempt + 1))
+                continue
+    
+    return None
 
 def add_product_to_collection(product_id, collection_id, shop_url, headers):
-    try:
-        url = f"https://{shop_url}/admin/api/2024-01/collects.json"
-        payload = {
-            "collect": {
-                "product_id": product_id,
-                "collection_id": collection_id
+    """Add product to collection with retry logic and rate limiting"""
+    max_retries = 3
+    retry_delay = 1  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            url = f"https://{shop_url}/admin/api/2024-01/collects.json"
+            payload = {
+                "collect": {
+                    "product_id": product_id,
+                    "collection_id": collection_id
+                }
             }
-        }
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
-        
-        if response.status_code == 422:
+            
+            # Rate limiting: Shopify allows 2 req/sec
+            time.sleep(0.5)  # 500ms delay = max 2 req/sec
+            
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
+            
+            # 422 = product already in collection (success)
+            if response.status_code == 422:
+                print(f"Product {product_id} already in collection {collection_id}")
+                return True
+            
+            # 429 = rate limit hit, retry with longer delay
+            if response.status_code == 429:
+                retry_after = int(response.headers.get('Retry-After', 2))
+                print(f"Rate limit hit, waiting {retry_after} seconds...")
+                time.sleep(retry_after)
+                continue
+            
+            response.raise_for_status()
             return True
-        
-        response.raise_for_status()
-        return True
-        
-    except Exception as e:
-        print(f"Error adding product {product_id} to collection {collection_id}: {str(e)}")
-        return False
+            
+        except requests.exceptions.Timeout:
+            print(f"Timeout adding product {product_id}, attempt {attempt + 1}/{max_retries}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+                continue
+            return False
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Error adding product {product_id} to collection {collection_id}: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay * (attempt + 1))
+                continue
+            return False
+            
+        except Exception as e:
+            print(f"Unexpected error adding product {product_id}: {str(e)}")
+            return False
+    
+    return False
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
