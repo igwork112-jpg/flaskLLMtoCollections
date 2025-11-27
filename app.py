@@ -397,7 +397,18 @@ Include ALL numbers {batch_start + 1} to {batch_end}."""
                 for idx in sorted(indices) if 1 <= idx <= len(products)
             ]
         
+        # Log what we're storing
+        print(f"[STORING] {len(all_collections)} collections with {total_assigned} total products")
+        
         store_data('classified_collections', all_collections)
+        
+        # Verify what was stored
+        verify_stored = get_data('classified_collections', {})
+        verify_total = sum(len(ids) for ids in verify_stored.values())
+        print(f"[VERIFIED] Storage contains {len(verify_stored)} collections with {verify_total} products")
+        
+        if verify_total != total_assigned:
+            print(f"[ERROR] Storage corruption: Expected {total_assigned}, got {verify_total}")
         
         return jsonify({
             "success": True,
@@ -419,6 +430,10 @@ def update_shopify_stream():
             collections = get_data('classified_collections', {})
             shop_url = get_data('shop_url', '')
             access_token = get_data('access_token', '')
+            
+            # Log what we retrieved
+            retrieved_total = sum(len(ids) for ids in collections.values())
+            print(f"\n[SHOPIFY UPDATE] Retrieved {len(collections)} collections with {retrieved_total} products")
             
             if not collections:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'No classification data'})}\n\n"
