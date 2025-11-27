@@ -582,6 +582,8 @@ def create_or_get_collection(collection_name, shop_url, headers):
             time.sleep(0.5)  # Rate limiting
             response = requests.post(create_url, headers=headers, json=payload, timeout=30)
             
+            print(f"POST response status: {response.status_code}")
+            
             if response.status_code == 429:
                 retry_after = int(response.headers.get('Retry-After', 2))
                 print(f"Rate limit hit, waiting {retry_after} seconds...")
@@ -592,7 +594,8 @@ def create_or_get_collection(collection_name, shop_url, headers):
             
             response_data = response.json()
             if "custom_collection" not in response_data:
-                print(f"Unexpected response creating collection {collection_name}: {response_data}")
+                print(f"Unexpected response creating collection {collection_name}")
+                print(f"Status: {response.status_code}, Response keys: {list(response_data.keys())}")
                 if attempt < max_retries - 1:
                     time.sleep(2 * (attempt + 1))
                     continue
