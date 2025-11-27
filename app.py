@@ -554,7 +554,17 @@ def create_or_get_collection(collection_name, shop_url, headers):
             
             response.raise_for_status()
             
-            collections = response.json().get("custom_collections", [])
+            search_data = response.json()
+            if "custom_collections" not in search_data:
+                print(f"Unexpected search response: {search_data}")
+                if "errors" in search_data:
+                    print(f"API Errors: {search_data['errors']}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                return None
+            
+            collections = search_data.get("custom_collections", [])
             for col in collections:
                 if col["title"].lower() == collection_name.lower():
                     print(f"Found existing collection: {collection_name} (ID: {col['id']})")
@@ -580,7 +590,15 @@ def create_or_get_collection(collection_name, shop_url, headers):
             
             response.raise_for_status()
             
-            collection_id = response.json()["custom_collection"]["id"]
+            response_data = response.json()
+            if "custom_collection" not in response_data:
+                print(f"Unexpected response creating collection {collection_name}: {response_data}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                return None
+            
+            collection_id = response_data["custom_collection"]["id"]
             print(f"Created new collection: {collection_name} (ID: {collection_id})")
             return collection_id
             
