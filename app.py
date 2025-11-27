@@ -63,6 +63,106 @@ print(f"✓ Session cleanup: automatic (24 hour expiry)")
 def index():
     return render_template('index.html')
 
+@app.route('/api/test-permissions', methods=['POST'])
+def test_permissions():
+    """Test endpoint to diagnose Shopify API permissions"""
+    try:
+        data = request.json
+        shop_url = data.get('shop_url', '').strip().replace('https://', '').replace('http://', '').rstrip('/')
+        access_token = data.get('access_token', '').strip()
+        
+        if not shop_url or not access_token:
+            return jsonify({"success": False, "error": "Missing shop_url or access_token"}), 400
+        
+        api_version = '2024-10'
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json"
+        }
+        
+        results = {}
+        
+        # Test 1: Read products
+        try:
+            url = f"https://{shop_url}/admin/api/{api_version}/products.json?limit=1"
+            resp = requests.get(url, headers=headers, timeout=10)
+            results['read_products'] = {
+                'status': resp.status_code,
+                'success': resp.status_code == 200,
+                'message': 'OK' if resp.status_code == 200 else resp.text[:200]
+            }
+        except Exception as e:
+            results['read_products'] = {'success': False, 'error': str(e)}
+        
+        # Test 2: Read collections
+        try:
+            url = f"https://{shop_url}/admin/api/{api_version}/custom_collections.json?limit=1"
+            resp = requests.get(url, headers=headers, timeout=10)
+            results['read_collections'] = {
+                'status': resp.status_code,
+                'success': resp.status_code == 200,
+                'message': 'OK' if resp.status_code == 200 else resp.text[:200]
+            }
+        except Exception as e:
+            results['read_collections'] = {'success': False, 'error': str(e)}
+        
+        # Test 3: Try to create a test collection
+        try:
+            test_collection_name = f"TEST_COLLECTION_{int(time.time())}"
+            url = f"https://{shop_url}/admin/api/{api_version}/custom_collections.json"
+            payload = {
+                "custom_collection": {
+                    "title": test_collection_name,
+                    "published": False  # Unpublished so it doesn't show up
+                }
+            }
+            resp = requests.post(url, headers=headers, json=payload, timeout=10)
+            
+            response_data = resp.json()
+            
+            # Check if we got a collection back or a list
+            if "custom_collection" in response_data:
+                # Success! Now delete it
+                collection_id = response_data["custom_collection"]["id"]
+                delete_url = f"https://{shop_url}/admin/api/{api_version}/custom_collections/{collection_id}.json"
+                requests.delete(delete_url, headers=headers, timeout=10)
+                
+                results['write_collections'] = {
+                    'status': resp.status_code,
+                    'success': True,
+                    'message': 'Successfully created and deleted test collection'
+                }
+            elif "custom_collections" in response_data:
+                # Got a list instead of creation - this is the problem!
+                results['write_collections'] = {
+                    'status': resp.status_code,
+                    'success': False,
+                    'message': 'PERMISSION ERROR: POST request returned GET response (list of collections). Token lacks write permission.',
+                    'response_type': 'list_instead_of_create'
+                }
+            else:
+                results['write_collections'] = {
+                    'status': resp.status_code,
+                    'success': False,
+                    'message': f'Unexpected response: {str(response_data)[:200]}'
+                }
+                
+        except Exception as e:
+            results['write_collections'] = {'success': False, 'error': str(e)}
+        
+        # Overall assessment
+        all_passed = all(r.get('success', False) for r in results.values())
+        
+        return jsonify({
+            "success": all_passed,
+            "results": results,
+            "recommendation": "All tests passed! You can use this token." if all_passed else 
+                           "Some tests failed. Please regenerate your access token with read_products and write_products scopes."
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
 @app.route('/api/fetch-products', methods=['POST'])
 def fetch_products():
     try:
@@ -81,7 +181,7 @@ def fetch_products():
         store_data('shop_url', shop_url)
         store_data('access_token', access_token)
         
-        api_version = '2024-07'  # Use stable API version compatible with most stores
+        api_version = '2024-10'  # Updated to latest stable version
         url = f"https://{shop_url}/admin/api/{api_version}/products.json"
         headers = {
             "X-Shopify-Access-Token": access_token,
@@ -456,6 +556,27 @@ def update_shopify_stream():
             shop_url = get_data('shop_url', '')
             access_token = get_data('access_token', '')
             
+            # Verify token permissions first
+            api_version = '2024-10'
+            headers = {
+                "X-Shopify-Access-Token": access_token,
+                "Content-Type": "application/json"
+            }
+            
+            # Test if we can access collections endpoint
+            test_url = f"https://{shop_url}/admin/api/{api_version}/custom_collections.json?limit=1"
+            try:
+                test_response = requests.get(test_url, headers=headers, timeout=10)
+                if test_response.status_code == 403:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Access token lacks permissions to read collections. Please verify your Shopify app has read_products and write_products scopes.'})}\n\n"
+                    return
+                elif test_response.status_code != 200:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'Cannot access Shopify API. Status: {test_response.status_code}'})}\n\n"
+                    return
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Connection test failed: {str(e)}'})}\n\n"
+                return
+            
             # Log what we retrieved
             retrieved_total = sum(len(ids) for ids in collections.values())
             print(f"\n[SHOPIFY UPDATE] Retrieved {len(collections)} collections with {retrieved_total} products")
@@ -490,11 +611,6 @@ def update_shopify_stream():
             if duplicates_removed > 0:
                 yield f"data: {json.dumps({'type': 'info', 'message': f'Removed {duplicates_removed} duplicate products'})}\n\n"
             
-            headers = {
-                "X-Shopify-Access-Token": access_token,
-                "Content-Type": "application/json"
-            }
-            
             success_count = 0
             total_products = len(seen_products)  # Use unique count
             
@@ -508,7 +624,8 @@ def update_shopify_stream():
                 collection_id = create_or_get_collection(collection_name, shop_url, headers)
                 
                 if not collection_id:
-                    yield f"data: {json.dumps({'type': 'collection_error', 'name': collection_name})}\n\n"
+                    error_msg = f"Failed to create collection '{collection_name}'. Check console for details."
+                    yield f"data: {json.dumps({'type': 'collection_error', 'name': collection_name, 'message': error_msg})}\n\n"
                     continue
                 
                 yield f"data: {json.dumps({'type': 'collection_created', 'name': collection_name, 'id': collection_id})}\n\n"
@@ -528,6 +645,8 @@ def update_shopify_stream():
             
             yield f"data: {json.dumps({'type': 'complete', 'success_count': success_count, 'total': total_products})}\n\n"
             
+        except PermissionError as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'is_permission_error': True})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
     
@@ -541,7 +660,7 @@ def create_or_get_collection(collection_name, shop_url, headers):
     max_retries = 3
     
     # Use stable API version compatible with most stores
-    api_version = '2024-07'
+    api_version = '2024-10'
     
     for attempt in range(max_retries):
         try:
@@ -583,10 +702,19 @@ def create_or_get_collection(collection_name, shop_url, headers):
                 }
             }
             
+            # Debug logging
+            print(f"\n[CREATE COLLECTION DEBUG]")
+            print(f"  URL: {create_url}")
+            print(f"  Method: POST")
+            print(f"  Payload: {json.dumps(payload)}")
+            print(f"  Headers: {list(headers.keys())}")
+            
             time.sleep(0.5)  # Rate limiting
             response = requests.post(create_url, headers=headers, json=payload, timeout=30)
             
-            print(f"POST response status: {response.status_code}")
+            print(f"  Response Status: {response.status_code}")
+            print(f"  Response Headers: {dict(response.headers)}")
+            print(f"  Response Body (first 500 chars): {response.text[:500]}")
             
             if response.status_code == 429:
                 retry_after = int(response.headers.get('Retry-After', 2))
@@ -600,6 +728,17 @@ def create_or_get_collection(collection_name, shop_url, headers):
             if "custom_collection" not in response_data:
                 print(f"Unexpected response creating collection {collection_name}")
                 print(f"Status: {response.status_code}, Response keys: {list(response_data.keys())}")
+                
+                # Check if it's a permissions issue
+                if "custom_collections" in response_data:
+                    error_msg = (
+                        f"PERMISSION ERROR: Cannot create collection '{collection_name}'. "
+                        f"Your Shopify API token is missing the 'write_collections' scope. "
+                        f"Please go to your Shopify Admin → Apps → Your Custom App → Configuration "
+                        f"and add 'write_collections' and 'read_collections' permissions, then generate a new access token."
+                    )
+                    print(f"ERROR: {error_msg}")
+                    raise PermissionError(error_msg)
                 if attempt < max_retries - 1:
                     time.sleep(2 * (attempt + 1))
                     continue
@@ -627,7 +766,7 @@ def add_product_to_collection(product_id, collection_id, shop_url, headers):
     """Add product to collection with retry logic and rate limiting"""
     max_retries = 3
     retry_delay = 1  # seconds
-    api_version = '2024-07'  # Match the version used in create_or_get_collection
+    api_version = '2024-10'  # Match the version used in create_or_get_collection
     
     for attempt in range(max_retries):
         try:

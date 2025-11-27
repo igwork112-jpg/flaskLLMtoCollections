@@ -261,6 +261,10 @@
                 <label for="tag">Product Tag to Filter</label>
                 <input type="text" id="tag" placeholder="e.g., featured, new-arrival">
             </div>
+            <button class="btn btn-primary" onclick="testPermissions()" id="test-btn" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                <span id="test-spinner" class="spinner hidden"></span>
+                <span id="test-text">🔍 Test Permissions</span>
+            </button>
             <button class="btn btn-primary" onclick="fetchProducts()" id="fetch-btn">
                 <span id="fetch-spinner" class="spinner hidden"></span>
                 <span id="fetch-text">Fetch Products</span>
@@ -319,6 +323,84 @@
             } else {
                 spinner.classList.add('hidden');
                 if (btnElement) btnElement.disabled = false;
+            }
+        }
+
+        async function testPermissions() {
+            clearLog();
+            
+            const shop_url = document.getElementById('shop_url').value.trim();
+            const access_token = document.getElementById('access_token').value.trim();
+
+            if (!shop_url || !access_token) {
+                log('✗ Please fill in Shop URL and Access Token', 'error');
+                return;
+            }
+
+            setLoading('test', true);
+            log('🔍 Testing Shopify API permissions...', 'info');
+            log('This will verify your token has the correct scopes.\n', 'info');
+
+            try {
+                const response = await fetch('/api/test-permissions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ shop_url, access_token })
+                });
+
+                const data = await response.json();
+
+                log('=== PERMISSION TEST RESULTS ===\n', 'info');
+                
+                // Test 1: Read Products
+                if (data.results.read_products) {
+                    const r = data.results.read_products;
+                    if (r.success) {
+                        log('✓ Read Products: PASS', 'success');
+                    } else {
+                        log(`✗ Read Products: FAIL (${r.status || 'error'})`, 'error');
+                        log(`  ${r.message || r.error}`, 'error');
+                    }
+                }
+                
+                // Test 2: Read Collections
+                if (data.results.read_collections) {
+                    const r = data.results.read_collections;
+                    if (r.success) {
+                        log('✓ Read Collections: PASS', 'success');
+                    } else {
+                        log(`✗ Read Collections: FAIL (${r.status || 'error'})`, 'error');
+                        log(`  ${r.message || r.error}`, 'error');
+                    }
+                }
+                
+                // Test 3: Write Collections (most important)
+                if (data.results.write_collections) {
+                    const r = data.results.write_collections;
+                    if (r.success) {
+                        log('✓ Write Collections: PASS', 'success');
+                    } else {
+                        log(`✗ Write Collections: FAIL (${r.status || 'error'})`, 'error');
+                        log(`  ${r.message || r.error}`, 'error');
+                        if (r.response_type === 'list_instead_of_create') {
+                            log('\n⚠️ CRITICAL: Your token lacks write permission!', 'error');
+                            log('Solution: Generate a NEW access token with these scopes:', 'error');
+                            log('  • read_products', 'error');
+                            log('  • write_products', 'error');
+                        }
+                    }
+                }
+                
+                log('\n' + data.recommendation, data.success ? 'success' : 'error');
+                
+                if (!data.success) {
+                    log('\n📖 See CLIENT_FIX_INSTRUCTIONS.md for detailed steps', 'info');
+                }
+
+            } catch (error) {
+                log(`✗ Test Error: ${error.message}`, 'error');
+            } finally {
+                setLoading('test', false);
             }
         }
 

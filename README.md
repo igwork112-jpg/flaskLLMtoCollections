@@ -60,12 +60,29 @@ Get your key from https://platform.openai.com/api-keys
 
 1. Enter your Shopify store URL (e.g., `your-store.myshopify.com`)
 2. Paste your Shopify Admin API access token
-3. Paste your OpenAI API key
+3. **(Optional)** Click **"🔍 Test Permissions"** to verify your token has correct scopes
 4. Enter a product tag to filter (e.g., `featured`, `new`)
 5. Click **"Fetch Products"** to retrieve products
 6. Click **"Classify Products"** to see AI-generated collections
 7. Review the groupings
 8. Click **"Update Shopify"** to create collections and add products
+
+## Troubleshooting
+
+### "Unexpected response creating collection" Error
+If you see this error, your access token lacks write permissions. See `QUICK_FIX.md` for a 5-minute solution.
+
+**Quick test**: Click the "🔍 Test Permissions" button to diagnose the issue.
+
+### Permission Issues
+- Make sure your Shopify app has `read_products` and `write_products` scopes
+- Generate a **fresh** access token after enabling scopes
+- Old tokens don't automatically get new permissions
+
+For detailed troubleshooting, see:
+- `QUICK_FIX.md` - Fast solution
+- `CLIENT_FIX_INSTRUCTIONS.md` - Step-by-step guide
+- `DEBUGGING_GUIDE.md` - Technical details
 
 ## How It Works
 
