@@ -227,8 +227,12 @@ Return ONLY a JSON array: ["Category 1", "Category 2", ...]"""
         # Track assignments: product_idx -> collection_name
         product_to_collection = {}
         
-        # Process in batches
-        batch_size = 50
+        # Process in batches (adaptive batch size for very large datasets)
+        if total_products > 1000:
+            batch_size = 100  # Larger batches for big datasets (faster)
+        else:
+            batch_size = 50
+        
         total_batches = (total_products + batch_size - 1) // batch_size
         
         for batch_num in range(total_batches):
@@ -245,14 +249,20 @@ Return ONLY a JSON array: ["Category 1", "Category 2", ...]"""
                 batch_lines.append(f"{idx}. {products[batch_start + i]['title']}")
             batch_text = "\n".join(batch_lines)
             
-            prompt = f"""Assign each product to ONE collection:
-Collections: {json.dumps(list(collections_dict.keys()))}
+            prompt = f"""CRITICAL: Assign each product to EXACTLY ONE collection. Each product number must appear ONLY ONCE.
 
-Products:
+Available collections: {json.dumps(list(collections_dict.keys()))}
+
+Products to classify:
 {batch_text}
 
-Return JSON: {{"1": "Collection", "2": "Collection", ...}}
-Include ALL numbers {batch_start + 1} to {batch_end}."""
+Return JSON mapping each product NUMBER to ONE collection name:
+{{"1": "Collection Name", "2": "Collection Name", ...}}
+
+RULES:
+- Each product number ({batch_start + 1} to {batch_end}) must appear EXACTLY ONCE
+- Choose the BEST MATCHING collection for each product
+- Do NOT put the same product in multiple collections"""
 
             # Get AI response
             ai_response = {}
@@ -260,10 +270,10 @@ Include ALL numbers {batch_start + 1} to {batch_end}."""
                 resp = openai.ChatCompletion.create(
                     model="gpt-3.5-turbo",
                     messages=[
-                        {"role": "system", "content": "Return ONLY JSON."},
+                        {"role": "system", "content": "You are a product classifier. Return ONLY a JSON object mapping product numbers to collection names. Format: {\"1\": \"Collection Name\", \"2\": \"Collection Name\"}. Each product number must appear exactly once."},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.2,
+                    temperature=0.1,
                     max_tokens=1500
                 )
                 
@@ -286,12 +296,23 @@ Include ALL numbers {batch_start + 1} to {batch_end}."""
                 
                 ai_response = json.loads(text)
                 
-                # Check if AI returned products outside this batch range
+                # Validate AI response
                 expected_range = set(range(batch_start + 1, batch_end + 1))
-                ai_products = set(int(k) for k in ai_response.keys() if k.isdigit())
-                unexpected = ai_products - expected_range
+                ai_products = [int(k) for k in ai_response.keys() if k.isdigit()]
+                ai_products_set = set(ai_products)
+                
+                # Check for products outside batch range
+                unexpected = ai_products_set - expected_range
                 if unexpected:
                     print(f"  ⚠️ AI returned products outside batch range: {sorted(unexpected)[:10]}")
+                    # Remove them
+                    for prod in unexpected:
+                        ai_response.pop(str(prod), None)
+                
+                # Check for duplicates in AI response (shouldn't happen but let's verify)
+                if len(ai_products) != len(ai_products_set):
+                    duplicates_in_response = len(ai_products) - len(ai_products_set)
+                    print(f"  ⚠️ AI returned {duplicates_in_response} duplicate product numbers in response")
                 
             except json.JSONDecodeError as e:
                 print(f"  ⚠️ JSON parsing failed: {e}")
@@ -320,7 +341,10 @@ Include ALL numbers {batch_start + 1} to {batch_end}."""
             print(f"  ✓ Assigned {batch_count} products")
             print(f"  Total assigned: {len(product_to_collection)}/{total_products}")
             
-            if total_batches > 5:
+            # Rate limiting (adaptive based on dataset size)
+            if total_batches > 20:
+                time.sleep(1)  # Longer delay for very large datasets
+            elif total_batches > 5:
                 time.sleep(0.5)
         
         # STEP 3: Verification
