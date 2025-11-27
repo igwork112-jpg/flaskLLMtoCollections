@@ -81,7 +81,8 @@ def fetch_products():
         store_data('shop_url', shop_url)
         store_data('access_token', access_token)
         
-        url = f"https://{shop_url}/admin/api/2024-01/products.json"
+        api_version = '2024-07'  # Use stable API version compatible with most stores
+        url = f"https://{shop_url}/admin/api/{api_version}/products.json"
         headers = {
             "X-Shopify-Access-Token": access_token,
             "Content-Type": "application/json"
@@ -539,10 +540,13 @@ def create_or_get_collection(collection_name, shop_url, headers):
     """Create or get collection with retry logic"""
     max_retries = 3
     
+    # Use stable API version compatible with most stores
+    api_version = '2024-07'
+    
     for attempt in range(max_retries):
         try:
             # Search for existing collection
-            search_url = f"https://{shop_url}/admin/api/2024-01/custom_collections.json"
+            search_url = f"https://{shop_url}/admin/api/{api_version}/custom_collections.json"
             response = requests.get(search_url, headers=headers, timeout=30)
             
             # Handle rate limiting
@@ -571,7 +575,7 @@ def create_or_get_collection(collection_name, shop_url, headers):
                     return col["id"]
             
             # Create new collection
-            create_url = f"https://{shop_url}/admin/api/2024-01/custom_collections.json"
+            create_url = f"https://{shop_url}/admin/api/{api_version}/custom_collections.json"
             payload = {
                 "custom_collection": {
                     "title": collection_name,
@@ -623,10 +627,11 @@ def add_product_to_collection(product_id, collection_id, shop_url, headers):
     """Add product to collection with retry logic and rate limiting"""
     max_retries = 3
     retry_delay = 1  # seconds
+    api_version = '2024-07'  # Match the version used in create_or_get_collection
     
     for attempt in range(max_retries):
         try:
-            url = f"https://{shop_url}/admin/api/2024-01/collects.json"
+            url = f"https://{shop_url}/admin/api/{api_version}/collects.json"
             payload = {
                 "collect": {
                     "product_id": product_id,
