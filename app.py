@@ -63,106 +63,6 @@ print(f"✓ Session cleanup: automatic (24 hour expiry)")
 def index():
     return render_template('index.html')
 
-@app.route('/api/test-permissions', methods=['POST'])
-def test_permissions():
-    """Test endpoint to diagnose Shopify API permissions"""
-    try:
-        data = request.json
-        shop_url = data.get('shop_url', '').strip().replace('https://', '').replace('http://', '').rstrip('/')
-        access_token = data.get('access_token', '').strip()
-        
-        if not shop_url or not access_token:
-            return jsonify({"success": False, "error": "Missing shop_url or access_token"}), 400
-        
-        api_version = '2024-10'
-        headers = {
-            "X-Shopify-Access-Token": access_token,
-            "Content-Type": "application/json"
-        }
-        
-        results = {}
-        
-        # Test 1: Read products
-        try:
-            url = f"https://{shop_url}/admin/api/{api_version}/products.json?limit=1"
-            resp = requests.get(url, headers=headers, timeout=10)
-            results['read_products'] = {
-                'status': resp.status_code,
-                'success': resp.status_code == 200,
-                'message': 'OK' if resp.status_code == 200 else resp.text[:200]
-            }
-        except Exception as e:
-            results['read_products'] = {'success': False, 'error': str(e)}
-        
-        # Test 2: Read collections
-        try:
-            url = f"https://{shop_url}/admin/api/{api_version}/custom_collections.json?limit=1"
-            resp = requests.get(url, headers=headers, timeout=10)
-            results['read_collections'] = {
-                'status': resp.status_code,
-                'success': resp.status_code == 200,
-                'message': 'OK' if resp.status_code == 200 else resp.text[:200]
-            }
-        except Exception as e:
-            results['read_collections'] = {'success': False, 'error': str(e)}
-        
-        # Test 3: Try to create a test collection
-        try:
-            test_collection_name = f"TEST_COLLECTION_{int(time.time())}"
-            url = f"https://{shop_url}/admin/api/{api_version}/custom_collections.json"
-            payload = {
-                "custom_collection": {
-                    "title": test_collection_name,
-                    "published": False  # Unpublished so it doesn't show up
-                }
-            }
-            resp = requests.post(url, headers=headers, json=payload, timeout=10)
-            
-            response_data = resp.json()
-            
-            # Check if we got a collection back or a list
-            if "custom_collection" in response_data:
-                # Success! Now delete it
-                collection_id = response_data["custom_collection"]["id"]
-                delete_url = f"https://{shop_url}/admin/api/{api_version}/custom_collections/{collection_id}.json"
-                requests.delete(delete_url, headers=headers, timeout=10)
-                
-                results['write_collections'] = {
-                    'status': resp.status_code,
-                    'success': True,
-                    'message': 'Successfully created and deleted test collection'
-                }
-            elif "custom_collections" in response_data:
-                # Got a list instead of creation - this is the problem!
-                results['write_collections'] = {
-                    'status': resp.status_code,
-                    'success': False,
-                    'message': 'PERMISSION ERROR: POST request returned GET response (list of collections). Token lacks write permission.',
-                    'response_type': 'list_instead_of_create'
-                }
-            else:
-                results['write_collections'] = {
-                    'status': resp.status_code,
-                    'success': False,
-                    'message': f'Unexpected response: {str(response_data)[:200]}'
-                }
-                
-        except Exception as e:
-            results['write_collections'] = {'success': False, 'error': str(e)}
-        
-        # Overall assessment
-        all_passed = all(r.get('success', False) for r in results.values())
-        
-        return jsonify({
-            "success": all_passed,
-            "results": results,
-            "recommendation": "All tests passed! You can use this token." if all_passed else 
-                           "Some tests failed. Please regenerate your access token with read_products and write_products scopes."
-        })
-        
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 400
-
 @app.route('/api/fetch-products', methods=['POST'])
 def fetch_products():
     try:
@@ -291,21 +191,43 @@ def classify_products():
         sample_size = min(50, total_products)
         sample_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_size)])
         
-        collection_prompt = f"""Analyze these products and suggest 5-12 collection categories.
+        collection_prompt = f"""Analyze these products and create logical, well-organized collection categories that GROUP similar products together.
 
+REQUIREMENTS:
+- Create 5-25 meaningful collections that group similar products
+- Each collection should contain MULTIPLE related products (not just 1-2 items)
+- Use clear, descriptive names that identify the product category
+- Group by: product type, use case, or product family
+- Balance specificity with grouping - be descriptive but not overly narrow
+
+GOOD EXAMPLES (products that should be grouped):
+- "Snowboards" (groups all snowboard variants together)
+- "Flooring Tools & Equipment" (groups saws, grinders, trims, sealants)
+- "Storage Solutions" (groups cabinets, shelters, trucks)
+- "Workshop Equipment" (groups industrial tools and machinery)
+- "Sports Equipment" (groups related sporting goods)
+
+BAD EXAMPLES (too specific, creates single-item collections):
+- "Snowboards - Collection: Hydrogen" ❌ (too specific)
+- "125mm Concrete Grinders" ❌ (too narrow)
+- "Red Silicone Sealant" ❌ (too detailed)
+
+Products to analyze:
 {sample_titles}
 
-Return ONLY a JSON array: ["Category 1", "Category 2", ...]"""
+Return ONLY a JSON array of collection names that will GROUP similar products: ["Category 1", "Category 2", ...]
+
+CRITICAL: Design collections so that similar/related products will be grouped together, not separated into individual collections."""
 
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "Return ONLY a JSON array."},
+                    {"role": "system", "content": "You are a product categorization expert. Create logical collection categories that GROUP similar products together. Avoid overly specific categories. Return ONLY a JSON array."},
                     {"role": "user", "content": collection_prompt}
                 ],
                 temperature=0.3,
-                max_tokens=300
+                max_tokens=400
             )
             
             result = response.choices[0].message.content.strip()
@@ -323,7 +245,6 @@ Return ONLY a JSON array: ["Category 1", "Category 2", ...]"""
         
         # Create empty collections
         collections_dict = {name: [] for name in suggested_collections}
-        collections_dict["Other"] = []
         
         # Track assignments: product_idx -> collection_name
         product_to_collection = {}
@@ -350,7 +271,7 @@ Return ONLY a JSON array: ["Category 1", "Category 2", ...]"""
                 batch_lines.append(f"{idx}. {products[batch_start + i]['title']}")
             batch_text = "\n".join(batch_lines)
             
-            prompt = f"""CRITICAL: Assign each product to EXACTLY ONE collection. Each product number must appear ONLY ONCE.
+            prompt = f"""CRITICAL: Assign each product to EXACTLY ONE collection. GROUP similar products together.
 
 Available collections: {json.dumps(list(collections_dict.keys()))}
 
@@ -362,8 +283,12 @@ Return JSON mapping each product NUMBER to ONE collection name:
 
 RULES:
 - Each product number ({batch_start + 1} to {batch_end}) must appear EXACTLY ONCE
-- Choose the BEST MATCHING collection for each product
-- Do NOT put the same product in multiple collections"""
+- GROUP similar/related products into the SAME collection
+- Look for product families, variants, or related items and put them together
+- Examples: All snowboards go together, all flooring tools go together, all storage items go together
+- Choose the collection that best represents the product type or category
+- Be flexible and creative - find the closest logical grouping
+- Do NOT create separate collections for minor variants of the same product type"""
 
             # Get AI response
             ai_response = {}
@@ -427,15 +352,18 @@ RULES:
             for i in range(batch_count):
                 product_idx = batch_start + i + 1
                 
-                # Get collection from AI or use fallback
-                collection = ai_response.get(str(product_idx), "Other")
-                if collection not in collections_dict:
-                    collection = "Other"
+                # Get collection from AI
+                collection = ai_response.get(str(product_idx))
+                if not collection or collection not in collections_dict:
+                    # Mark for re-classification instead of fallback
+                    collection = None
                 
                 # CRITICAL: Only assign if not already assigned
                 if product_idx not in product_to_collection:
-                    product_to_collection[product_idx] = collection
-                    collections_dict[collection].append(product_idx)
+                    if collection:
+                        product_to_collection[product_idx] = collection
+                        collections_dict[collection].append(product_idx)
+                    # If no valid collection, leave unassigned for Step 3
                 else:
                     print(f"  ⚠️ Product {product_idx} already assigned, skipping")
             
@@ -448,19 +376,64 @@ RULES:
             elif total_batches > 5:
                 time.sleep(0.5)
         
-        # STEP 3: Verification
-        print(f"\nStep 3: Verification...")
+        # STEP 3: Verification and re-classification
+        print(f"\nStep 3: Verification and re-classification...")
         
         # Check for missing products
         missing = []
         for i in range(1, total_products + 1):
             if i not in product_to_collection:
                 missing.append(i)
-                product_to_collection[i] = "Other"
-                collections_dict["Other"].append(i)
         
         if missing:
-            print(f"  ⚠️ Added {len(missing)} missing products to 'Other'")
+            print(f"  ⚠️ Found {len(missing)} unclassified products, using AI to find best matches...")
+            
+            # Re-classify missing products using AI
+            for product_idx in missing:
+                product_title = products[product_idx - 1]['title']
+                
+                # Ask AI to find the best collection for this specific product
+                reclassify_prompt = f"""Given this product and available collections, choose the BEST matching collection.
+
+Product: {product_title}
+
+Available collections: {json.dumps(list(collections_dict.keys()))}
+
+Return ONLY the collection name that best matches this product. Be creative and flexible - find the closest match based on product type, attributes, or characteristics."""
+
+                try:
+                    resp = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",
+                        messages=[
+                            {"role": "system", "content": "You are a product categorization expert. Return ONLY the collection name, nothing else."},
+                            {"role": "user", "content": reclassify_prompt}
+                        ],
+                        temperature=0.2,
+                        max_tokens=50
+                    )
+                    
+                    best_collection = resp.choices[0].message.content.strip().strip('"\'')
+                    
+                    # Validate the collection exists
+                    if best_collection in collections_dict:
+                        product_to_collection[product_idx] = best_collection
+                        collections_dict[best_collection].append(product_idx)
+                        print(f"    ✓ Product {product_idx} → '{best_collection}'")
+                    else:
+                        # If AI returns invalid collection, use the first one
+                        fallback = list(collections_dict.keys())[0]
+                        product_to_collection[product_idx] = fallback
+                        collections_dict[fallback].append(product_idx)
+                        print(f"    ⚠️ Product {product_idx} → '{fallback}' (AI returned invalid collection)")
+                    
+                    time.sleep(0.3)  # Rate limiting
+                    
+                except Exception as e:
+                    print(f"    ⚠️ Error re-classifying product {product_idx}: {e}")
+                    # Fallback to first collection only on error
+                    fallback = list(collections_dict.keys())[0]
+                    product_to_collection[product_idx] = fallback
+                    collections_dict[fallback].append(product_idx)
         
         # Remove empty collections
         all_collections = {name: ids for name, ids in collections_dict.items() if ids}
