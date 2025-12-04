@@ -607,8 +607,8 @@ def update_shopify_stream():
                 for idx in indices:
                     if 1 <= idx <= len(products):
                         product = products[idx - 1]
-                        
-                        if add_product_to_collection(product["id"], collection_id, shop_url, headers):
+
+                        if add_product_to_collection(product["id"], collection_id, collection_name, shop_url, headers):
                             success_count += 1
                             result = json.dumps({'type': 'product_added', 'collection': collection_name, 'product': product['title'], 'status': 'success'})
                             yield f"data: {result}\n\n"
@@ -735,14 +735,15 @@ def create_or_get_collection(collection_name, shop_url, headers):
     
     return None
 
-def add_product_to_collection(product_id, collection_id, shop_url, headers):
-    """Add product to collection with retry logic and rate limiting"""
+def add_product_to_collection(product_id, collection_id, collection_name, shop_url, headers):
+    """Add product to collection and update product tags/type with retry logic and rate limiting"""
     max_retries = 3
     retry_delay = 1  # seconds
     api_version = '2024-10'  # Match the version used in create_or_get_collection
-    
+
     for attempt in range(max_retries):
         try:
+            # STEP 1: Add product to collection
             url = f"https://{shop_url}/admin/api/{api_version}/collects.json"
             payload = {
                 "collect": {
@@ -750,45 +751,91 @@ def add_product_to_collection(product_id, collection_id, shop_url, headers):
                     "collection_id": collection_id
                 }
             }
-            
+
             # Rate limiting: Shopify allows 2 req/sec
             time.sleep(0.5)  # 500ms delay = max 2 req/sec
-            
+
             response = requests.post(url, headers=headers, json=payload, timeout=30)
-            
+
             # 422 = product already in collection (success)
             if response.status_code == 422:
                 print(f"Product {product_id} already in collection {collection_id}")
-                return True
-            
-            # 429 = rate limit hit, retry with longer delay
-            if response.status_code == 429:
+            elif response.status_code == 429:
+                # 429 = rate limit hit, retry with longer delay
                 retry_after = int(response.headers.get('Retry-After', 2))
                 print(f"Rate limit hit, waiting {retry_after} seconds...")
                 time.sleep(retry_after)
                 continue
-            
-            response.raise_for_status()
+            else:
+                response.raise_for_status()
+
+            # STEP 2: Update product tags and product type
+            # First, get the current product data
+            product_url = f"https://{shop_url}/admin/api/{api_version}/products/{product_id}.json"
+            time.sleep(0.5)  # Rate limiting
+
+            get_response = requests.get(product_url, headers=headers, timeout=30)
+
+            if get_response.status_code == 429:
+                retry_after = int(get_response.headers.get('Retry-After', 2))
+                print(f"Rate limit hit while fetching product, waiting {retry_after} seconds...")
+                time.sleep(retry_after)
+                continue
+
+            get_response.raise_for_status()
+            product_data = get_response.json().get('product', {})
+
+            # Get existing tags and add collection name if not already present
+            existing_tags = product_data.get('tags', '')
+            tag_list = [tag.strip() for tag in existing_tags.split(',') if tag.strip()]
+
+            # Add collection name as tag if not already present
+            if collection_name not in tag_list:
+                tag_list.append(collection_name)
+
+            updated_tags = ', '.join(tag_list)
+
+            # Update product with new tags and product type
+            update_payload = {
+                "product": {
+                    "id": product_id,
+                    "tags": updated_tags,
+                    "product_type": collection_name
+                }
+            }
+
+            time.sleep(0.5)  # Rate limiting
+            update_response = requests.put(product_url, headers=headers, json=update_payload, timeout=30)
+
+            if update_response.status_code == 429:
+                retry_after = int(update_response.headers.get('Retry-After', 2))
+                print(f"Rate limit hit while updating product, waiting {retry_after} seconds...")
+                time.sleep(retry_after)
+                continue
+
+            update_response.raise_for_status()
+            print(f"✓ Product {product_id}: added tag '{collection_name}' and set product_type to '{collection_name}'")
+
             return True
-            
+
         except requests.exceptions.Timeout:
             print(f"Timeout adding product {product_id}, attempt {attempt + 1}/{max_retries}")
             if attempt < max_retries - 1:
                 time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
                 continue
             return False
-            
+
         except requests.exceptions.RequestException as e:
             print(f"Error adding product {product_id} to collection {collection_id}: {str(e)}")
             if attempt < max_retries - 1:
                 time.sleep(retry_delay * (attempt + 1))
                 continue
             return False
-            
+
         except Exception as e:
             print(f"Unexpected error adding product {product_id}: {str(e)}")
             return False
-    
+
     return False
 
 if __name__ == '__main__':
