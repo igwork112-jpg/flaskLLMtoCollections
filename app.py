@@ -186,59 +186,107 @@ def classify_products():
         print(f"STARTING CLASSIFICATION: {total_products} products")
         print(f"{'='*60}\n")
         
-        # STEP 1: Get collection names from AI
-        print("Step 1: Getting collection categories...")
-        sample_size = min(50, total_products)
+        # STEP 1: Get hierarchical collection structure from AI (Parent → Subcategories)
+        print("Step 1: Getting hierarchical collection structure...")
+        sample_size = min(200, total_products)  # Larger sample for better analysis
         sample_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_size)])
-        
-        collection_prompt = f"""Analyze these products and create logical, well-organized collection categories that GROUP similar products together.
+
+        collection_prompt = f"""Analyze these products and create a DETAILED HIERARCHICAL collection structure with parent categories and specific subcategories.
 
 REQUIREMENTS:
-- Create 5-25 meaningful collections that group similar products
-- Each collection should contain MULTIPLE related products (not just 1-2 items)
-- Use clear, descriptive names that identify the product category
-- Group by: product type, use case, or product family
-- Balance specificity with grouping - be descriptive but not overly narrow
+- Create 5-15 PARENT categories (broad product types)
+- For EACH parent, create 5-20 SPECIFIC subcategories (granular product types)
+- Aim for 50-200+ total subcategories across all parents
+- Subcategories should be HIGHLY SPECIFIC and DETAILED
+- Use demographic segmentation: Men's, Women's, Kids', Unisex
+- Use size/type variations: Ankle, Crew, Knee-High, Compression
+- Use material/style details: Cotton, Wool, Running, Casual, Formal
 
-GOOD EXAMPLES (products that should be grouped):
-- "Snowboards" (groups all snowboard variants together)
-- "Flooring Tools & Equipment" (groups saws, grinders, trims, sealants)
-- "Storage Solutions" (groups cabinets, shelters, trucks)
-- "Workshop Equipment" (groups industrial tools and machinery)
-- "Sports Equipment" (groups related sporting goods)
+EXCELLENT EXAMPLES:
+Parent: "Footwear"
+  Subcategories: ["Men's Running Shoes", "Women's Running Shoes", "Kids' Running Shoes",
+                  "Men's Casual Shoes", "Women's Casual Shoes", "Kids' Casual Shoes",
+                  "Men's Boots", "Women's Boots", "Kids' Boots",
+                  "Men's Dress Shoes", "Women's Dress Shoes",
+                  "Men's Athletic Socks", "Women's Athletic Socks", "Kids' Athletic Socks",
+                  "Men's Dress Socks", "Women's Dress Socks",
+                  "Men's Casual Socks", "Women's Casual Socks", "Kids' Casual Socks",
+                  "Compression Socks", "Ankle Socks", "Crew Socks", "Knee-High Socks"]
 
-BAD EXAMPLES (too specific, creates single-item collections):
-- "Snowboards - Collection: Hydrogen" ❌ (too specific)
-- "125mm Concrete Grinders" ❌ (too narrow)
-- "Red Silicone Sealant" ❌ (too detailed)
+Parent: "Apparel"
+  Subcategories: ["Men's T-Shirts", "Women's T-Shirts", "Kids' T-Shirts",
+                  "Men's Hoodies", "Women's Hoodies", "Kids' Hoodies",
+                  "Men's Jeans", "Women's Jeans", "Kids' Jeans",
+                  "Men's Shorts", "Women's Shorts", "Kids' Shorts",
+                  "Men's Jackets", "Women's Jackets", "Kids' Jackets"]
 
-Products to analyze:
+Parent: "Electronics"
+  Subcategories: ["Smartphones", "Tablets", "Laptops", "Desktop Computers",
+                  "Headphones", "Earbuds", "Speakers", "Smart Watches",
+                  "Cameras", "Phone Cases", "Screen Protectors", "Chargers", "Cables"]
+
+Products to analyze (sample of {sample_size} from {total_products} total):
 {sample_titles}
 
-Return ONLY a JSON array of collection names that will GROUP similar products: ["Category 1", "Category 2", ...]
+Return a JSON object with parent categories as keys, and arrays of specific subcategories as values:
+{{
+  "Parent Category 1": ["Specific Sub 1", "Specific Sub 2", "Specific Sub 3", ...],
+  "Parent Category 2": ["Specific Sub 1", "Specific Sub 2", ...],
+  ...
+}}
 
-CRITICAL: Design collections so that similar/related products will be grouped together, not separated into individual collections."""
+CRITICAL RULES:
+1. Be VERY SPECIFIC in subcategories (e.g., "Men's Running Shoes" not just "Shoes")
+2. Create MANY subcategories (aim for 50-200+ total)
+3. Use demographic splits (Men's/Women's/Kids') whenever applicable
+4. Include style/type variations (Running/Casual/Formal, etc.)
+5. Each subcategory should be unique and descriptive
+6. Subcategories are what products will actually be assigned to (not parents)"""
 
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a product categorization expert. Create logical collection categories that GROUP similar products together. Avoid overly specific categories. Return ONLY a JSON array."},
+                    {"role": "system", "content": "You are an expert e-commerce product categorization specialist. Create DETAILED, SPECIFIC hierarchical collections with many subcategories. Return ONLY valid JSON."},
                     {"role": "user", "content": collection_prompt}
                 ],
-                temperature=0.3,
-                max_tokens=400
+                temperature=0.4,
+                max_tokens=2000  # Increased for more categories
             )
-            
+
             result = response.choices[0].message.content.strip()
             if "```" in result:
                 result = result.split("```")[1].replace("json", "").strip()
-            
-            suggested_collections = json.loads(result)
-            print(f"✓ Got {len(suggested_collections)} collections")
+
+            hierarchy = json.loads(result)
+
+            # Flatten hierarchy into subcategories with parent prefix
+            suggested_collections = []
+            parent_mapping = {}  # Track which parent each subcategory belongs to
+
+            for parent, subcategories in hierarchy.items():
+                for subcat in subcategories:
+                    # Format: "Parent > Subcategory" for Shopify
+                    full_name = f"{parent} > {subcat}"
+                    suggested_collections.append(full_name)
+                    parent_mapping[full_name] = parent
+
+            print(f"✓ Got {len(hierarchy)} parent categories")
+            print(f"✓ Got {len(suggested_collections)} total subcategories")
+
+            # Store parent mapping for later use
+            store_data('parent_mapping', parent_mapping)
+
         except Exception as e:
-            print(f"⚠️ Using default collections")
-            suggested_collections = ["General Products"]
+            print(f"⚠️ Error getting hierarchical collections: {e}")
+            print(f"⚠️ Using default hierarchical structure")
+            suggested_collections = [
+                "Apparel > Men's Shirts", "Apparel > Women's Shirts", "Apparel > Kids' Shirts",
+                "Footwear > Men's Shoes", "Footwear > Women's Shoes", "Footwear > Kids' Shoes",
+                "Accessories > Bags", "Accessories > Hats", "Accessories > Belts"
+            ]
+            parent_mapping = {col: col.split(" > ")[0] for col in suggested_collections}
+            store_data('parent_mapping', parent_mapping)
         
         # STEP 2: Initialize tracking - ONE product = ONE collection
         print(f"\nStep 2: Classifying {total_products} products...")
@@ -249,11 +297,19 @@ CRITICAL: Design collections so that similar/related products will be grouped to
         # Track assignments: product_idx -> collection_name
         product_to_collection = {}
         
-        # Process in batches (adaptive batch size for very large datasets)
-        if total_products > 1000:
-            batch_size = 100  # Larger batches for big datasets (faster)
-        else:
+        # Process in batches (adaptive batch size based on dataset and collection count)
+        # With more collections, we need smaller batches for better accuracy
+        num_collections = len(suggested_collections)
+
+        if num_collections > 100:
+            # Many collections = smaller batches for better accuracy
+            batch_size = 25
+        elif num_collections > 50:
+            batch_size = 35
+        elif total_products > 1000:
             batch_size = 50
+        else:
+            batch_size = 40
         
         total_batches = (total_products + batch_size - 1) // batch_size
         
@@ -271,24 +327,35 @@ CRITICAL: Design collections so that similar/related products will be grouped to
                 batch_lines.append(f"{idx}. {products[batch_start + i]['title']}")
             batch_text = "\n".join(batch_lines)
             
-            prompt = f"""CRITICAL: Assign each product to EXACTLY ONE collection. GROUP similar products together.
+            prompt = f"""CRITICAL: Assign each product to EXACTLY ONE specific subcategory. Be PRECISE and DETAILED.
 
-Available collections: {json.dumps(list(collections_dict.keys()))}
+Available collections (hierarchical format "Parent > Subcategory"):
+{json.dumps(list(collections_dict.keys()), indent=2)}
 
 Products to classify:
 {batch_text}
 
-Return JSON mapping each product NUMBER to ONE collection name:
-{{"1": "Collection Name", "2": "Collection Name", ...}}
+Return JSON mapping each product NUMBER to ONE collection name (use exact format "Parent > Subcategory"):
+{{"1": "Parent > Subcategory", "2": "Parent > Subcategory", ...}}
 
-RULES:
-- Each product number ({batch_start + 1} to {batch_end}) must appear EXACTLY ONCE
-- GROUP similar/related products into the SAME collection
-- Look for product families, variants, or related items and put them together
-- Examples: All snowboards go together, all flooring tools go together, all storage items go together
-- Choose the collection that best represents the product type or category
-- Be flexible and creative - find the closest logical grouping
-- Do NOT create separate collections for minor variants of the same product type"""
+CLASSIFICATION RULES:
+1. Each product ({batch_start + 1} to {batch_end}) must appear EXACTLY ONCE
+2. Choose the MOST SPECIFIC subcategory that matches the product
+3. Consider demographics: Men's vs Women's vs Kids' vs Unisex
+4. Consider type/style: Running vs Casual vs Formal vs Athletic
+5. Consider material/features when available
+6. If unsure, pick the closest match - don't leave products unassigned
+7. Use the EXACT collection name from the list above (including " > " separator)
+
+EXAMPLES:
+- "Nike Men's Air Max Running Shoes" → "Footwear > Men's Running Shoes"
+- "Women's Cotton Ankle Socks White" → "Footwear > Women's Casual Socks" or "Footwear > Ankle Socks"
+- "Kids Winter Boots Size 5" → "Footwear > Kids' Boots"
+- "Men's Business Dress Socks Black" → "Footwear > Men's Dress Socks"
+- "iPhone 13 Leather Case" → "Electronics > Phone Cases"
+- "Women's Yoga Leggings" → "Apparel > Women's Athletic Wear" (or similar)
+
+Be SPECIFIC and ACCURATE. Match products to the most appropriate granular subcategory."""
 
             # Get AI response
             ai_response = {}
@@ -296,11 +363,11 @@ RULES:
                 resp = openai.ChatCompletion.create(
                     model="gpt-3.5-turbo",
                     messages=[
-                        {"role": "system", "content": "You are a product classifier. Return ONLY a JSON object mapping product numbers to collection names. Format: {\"1\": \"Collection Name\", \"2\": \"Collection Name\"}. Each product number must appear exactly once."},
+                        {"role": "system", "content": "You are an expert product classifier. Analyze each product carefully and assign it to the MOST SPECIFIC matching subcategory. Return ONLY a JSON object mapping product numbers to collection names using exact format \"Parent > Subcategory\". Each product number must appear exactly once."},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.1,
-                    max_tokens=1500
+                    temperature=0.2,  # Slightly higher for creative matching
+                    max_tokens=2500   # Increased for many collections
                 )
                 
                 text = resp.choices[0].message.content.strip()
@@ -393,13 +460,16 @@ RULES:
                 product_title = products[product_idx - 1]['title']
                 
                 # Ask AI to find the best collection for this specific product
-                reclassify_prompt = f"""Given this product and available collections, choose the BEST matching collection.
+                reclassify_prompt = f"""Given this product and available hierarchical collections, choose the MOST SPECIFIC matching collection.
 
 Product: {product_title}
 
-Available collections: {json.dumps(list(collections_dict.keys()))}
+Available collections (format "Parent > Subcategory"):
+{json.dumps(list(collections_dict.keys()), indent=2)}
 
-Return ONLY the collection name that best matches this product. Be creative and flexible - find the closest match based on product type, attributes, or characteristics."""
+Analyze the product and return ONLY the exact collection name (with " > " format) that best matches.
+Consider: demographics (Men's/Women's/Kids'), style (Running/Casual/Formal), type, and material.
+Be specific and precise. Return the exact collection name from the list above."""
 
                 try:
                     resp = openai.ChatCompletion.create(
@@ -482,9 +552,31 @@ Return ONLY the collection name that best matches this product. Be creative and 
             print(f"❌ ERROR: Count mismatch!")
         
         print(f"{'='*60}\n")
-        
-        for name, ids in sorted(all_collections.items(), key=lambda x: len(x[1]), reverse=True):
-            print(f"  {name}: {len(ids)} products")
+
+        # Group by parent category for better display
+        parent_breakdown = {}
+        for name, ids in all_collections.items():
+            if " > " in name:
+                parent = name.split(" > ")[0]
+                subcat = name.split(" > ")[1]
+            else:
+                parent = "Other"
+                subcat = name
+
+            if parent not in parent_breakdown:
+                parent_breakdown[parent] = []
+            parent_breakdown[parent].append((subcat, len(ids)))
+
+        print("COLLECTION BREAKDOWN BY PARENT CATEGORY:\n")
+        for parent in sorted(parent_breakdown.keys()):
+            subcats = parent_breakdown[parent]
+            total_in_parent = sum(count for _, count in subcats)
+            print(f"📁 {parent} ({len(subcats)} subcategories, {total_in_parent} products)")
+            for subcat, count in sorted(subcats, key=lambda x: x[1], reverse=True)[:10]:  # Show top 10
+                print(f"   ├─ {subcat}: {count} products")
+            if len(subcats) > 10:
+                print(f"   └─ ... and {len(subcats) - 10} more subcategories")
+            print()
         print()
         
         # Format for display
@@ -583,12 +675,30 @@ def update_shopify_stream():
             
             if duplicates_removed > 0:
                 yield f"data: {json.dumps({'type': 'info', 'message': f'Removed {duplicates_removed} duplicate products'})}\n\n"
-            
+
+            # Extract parent categories and create them first
+            parent_categories = set()
+            for collection_name in collections.keys():
+                if " > " in collection_name:
+                    parent = collection_name.split(" > ")[0]
+                    parent_categories.add(parent)
+
+            yield f"data: {json.dumps({'type': 'info', 'message': f'Creating {len(parent_categories)} parent categories...'})}\n\n"
+
+            # Create parent collections first (for organizational purposes)
+            parent_ids = {}
+            for parent_name in sorted(parent_categories):
+                parent_id = create_or_get_collection(parent_name, shop_url, headers)
+                if parent_id:
+                    parent_ids[parent_name] = parent_id
+                    yield f"data: {json.dumps({'type': 'parent_created', 'name': parent_name, 'id': parent_id})}\n\n"
+                time.sleep(0.5)  # Rate limiting
+
             success_count = 0
             total_products = len(seen_products)  # Use unique count
-            
-            yield f"data: {json.dumps({'type': 'start', 'total': total_products, 'collections': len(collections)})}\n\n"
-            
+
+            yield f"data: {json.dumps({'type': 'start', 'total': total_products, 'collections': len(collections), 'parents': len(parent_categories)})}\n\n"
+
             for collection_name, indices in collections.items():
                 # Notify collection processing
                 yield f"data: {json.dumps({'type': 'collection_start', 'name': collection_name, 'count': len(indices)})}\n\n"
@@ -789,9 +899,19 @@ def add_product_to_collection(product_id, collection_id, collection_name, shop_u
             existing_tags = product_data.get('tags', '')
             tag_list = [tag.strip() for tag in existing_tags.split(',') if tag.strip()]
 
-            # Add collection name as tag if not already present
+            # Add full collection name as tag if not already present
             if collection_name not in tag_list:
                 tag_list.append(collection_name)
+
+            # Extract subcategory for product_type (cleaner than full "Parent > Subcategory")
+            if " > " in collection_name:
+                parent_name, subcategory_name = collection_name.split(" > ", 1)
+                product_type_value = subcategory_name  # Use just subcategory for product_type
+                # Also add parent as a tag for filtering
+                if parent_name not in tag_list:
+                    tag_list.append(parent_name)
+            else:
+                product_type_value = collection_name
 
             updated_tags = ', '.join(tag_list)
 
@@ -800,7 +920,7 @@ def add_product_to_collection(product_id, collection_id, collection_name, shop_u
                 "product": {
                     "id": product_id,
                     "tags": updated_tags,
-                    "product_type": collection_name
+                    "product_type": product_type_value
                 }
             }
 
@@ -814,7 +934,7 @@ def add_product_to_collection(product_id, collection_id, collection_name, shop_u
                 continue
 
             update_response.raise_for_status()
-            print(f"✓ Product {product_id}: added tag '{collection_name}' and set product_type to '{collection_name}'")
+            print(f"✓ Product {product_id}: added tags ('{parent_name if ' > ' in collection_name else ''}', '{collection_name}') and set product_type to '{product_type_value}'")
 
             return True
 
