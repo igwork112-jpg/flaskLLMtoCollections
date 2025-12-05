@@ -402,7 +402,8 @@
             }
 
             try {
-                const response = await fetch('/api/classify', {
+                // Step 1: Initialize classification
+                const initResponse = await fetch('/api/classify-start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -410,45 +411,93 @@
                     })
                 });
 
-                const data = await response.json();
-
-                if (data.success) {
-                    if (data.batches_processed > 1) {
-                        log(`✓ Processed ${data.batches_processed} batches`, 'success');
-                    }
-                    log(`\n✓ Classified into ${Object.keys(data.collections).length} collections:\n`, 'success');
-                    
-                    const logArea = document.getElementById('log');
-                    
-                    Object.entries(data.collections).forEach(([collectionName, products]) => {
-                        const collectionDiv = document.createElement('div');
-                        collectionDiv.className = 'collection-group';
-                        
-                        const title = document.createElement('div');
-                        title.className = 'collection-title';
-                        title.textContent = `📁 ${collectionName} (${products.length} products)`;
-                        collectionDiv.appendChild(title);
-                        
-                        products.forEach(p => {
-                            const productDiv = document.createElement('div');
-                            productDiv.className = 'product-item';
-                            productDiv.textContent = `${p.index}. ${p.title}`;
-                            collectionDiv.appendChild(productDiv);
-                        });
-                        
-                        logArea.appendChild(collectionDiv);
-                    });
-                    
-                    document.getElementById('collection-count').textContent = Object.keys(data.collections).length;
-                    document.getElementById('update-btn').disabled = false;
-                    
-                    log('\n✓ Ready to update Shopify. Click "Update Shopify"', 'success');
-                } else {
-                    log(`✗ Error: ${data.error}`, 'error');
+                const initData = await initResponse.json();
+                if (!initData.success) {
+                    log(`✗ Error: ${initData.error}`, 'error');
+                    setLoading('classify', false);
+                    return;
                 }
+
+                // Step 2: Connect to streaming endpoint
+                const eventSource = new EventSource('/api/classify-stream');
+
+                let progressDiv = document.createElement('div');
+                progressDiv.style.cssText = 'padding: 10px; margin: 10px 0; background: #e3f2fd; border-radius: 5px; font-family: monospace;';
+                progressDiv.innerHTML = '<strong>⏳ Progress:</strong> <span id="progress-text">Starting...</span>';
+                document.getElementById('log').appendChild(progressDiv);
+
+                eventSource.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+
+                    switch(data.type) {
+                        case 'start':
+                            document.getElementById('progress-text').textContent = `Starting classification of ${data.total} products...`;
+                            break;
+
+                        case 'info':
+                            log(`ℹ️ ${data.message}`, 'info');
+                            break;
+
+                        case 'progress':
+                            const progressText = `${data.percentage}% (${data.current}/${data.total}) - ${data.product.substring(0, 60)}...`;
+                            document.getElementById('progress-text').textContent = progressText;
+                            break;
+
+                        case 'complete':
+                            eventSource.close();
+                            progressDiv.remove();
+
+                            log(`\n✓ Classification complete!`, 'success');
+                            log(`✓ Classified into ${data.total_collections} collections:\n`, 'success');
+
+                            const logArea = document.getElementById('log');
+
+                            Object.entries(data.collections).forEach(([collectionName, products]) => {
+                                const collectionDiv = document.createElement('div');
+                                collectionDiv.className = 'collection-group';
+
+                                const title = document.createElement('div');
+                                title.className = 'collection-title';
+                                title.textContent = `📁 ${collectionName} (${products.length} products)`;
+                                collectionDiv.appendChild(title);
+
+                                products.forEach(p => {
+                                    const productDiv = document.createElement('div');
+                                    productDiv.className = 'product-item';
+                                    productDiv.textContent = `${p.index}. ${p.title}`;
+                                    collectionDiv.appendChild(productDiv);
+                                });
+
+                                logArea.appendChild(collectionDiv);
+                            });
+
+                            document.getElementById('collection-count').textContent = Object.keys(data.collections).length;
+                            document.getElementById('update-btn').disabled = false;
+
+                            log('\n✓ Ready to update Shopify. Click "Update Shopify"', 'success');
+                            setLoading('classify', false);
+                            break;
+
+                        case 'error':
+                            eventSource.close();
+                            progressDiv.remove();
+                            log(`✗ Error: ${data.message}`, 'error');
+                            setLoading('classify', false);
+                            break;
+                    }
+                };
+
+                eventSource.onerror = function(error) {
+                    eventSource.close();
+                    if (progressDiv.parentNode) {
+                        progressDiv.remove();
+                    }
+                    log('✗ Connection error or stream closed', 'error');
+                    setLoading('classify', false);
+                };
+
             } catch (error) {
                 log(`✗ Error: ${error.message}`, 'error');
-            } finally {
                 setLoading('classify', false);
             }
         }

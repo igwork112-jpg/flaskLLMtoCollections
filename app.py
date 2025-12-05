@@ -585,6 +585,183 @@ Be PRECISE and choose the most granular match."""
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 400
 
+@app.route('/api/classify-start', methods=['POST'])
+def classify_start():
+    """Initialize classification by storing user collections"""
+    try:
+        data = request.json or {}
+        user_collections = data.get('user_collections', None)
+
+        if user_collections and len(user_collections) > 0:
+            store_data('user_collections_input', user_collections)
+        else:
+            store_data('user_collections_input', None)
+
+        return jsonify({"success": True, "message": "Ready to classify"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+@app.route('/api/classify-stream', methods=['GET'])
+def classify_products_stream():
+    def generate():
+        try:
+            products = get_data('products', [])
+            user_collections = get_data('user_collections_input', None)
+
+            if not products:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'No products found. Fetch products first.'})}\n\n"
+                return
+
+            if not OPENAI_API_KEY:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'OpenAI API key not configured'})}\n\n"
+                return
+
+            openai.api_key = OPENAI_API_KEY
+            total_products = len(products)
+
+            yield f"data: {json.dumps({'type': 'start', 'total': total_products})}\n\n"
+
+            # Step 1: Get or generate collections
+            if user_collections and len(user_collections) > 0:
+                suggested_collections = user_collections
+                yield f"data: {json.dumps({'type': 'info', 'message': f'Using {len(user_collections)} custom collections'})}\n\n"
+
+                parent_mapping = {}
+                for col in suggested_collections:
+                    if " > " in col:
+                        parent = col.split(" > ")[0]
+                        parent_mapping[col] = parent
+                store_data('parent_mapping', parent_mapping)
+            else:
+                # AI generation (same as before, but with progress updates)
+                yield f"data: {json.dumps({'type': 'info', 'message': 'Generating collections with AI...'})}\n\n"
+
+                sample_count = min(total_products, 1000)
+                all_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_count)])
+
+                collection_prompt = f"""You are analyzing {sample_count} construction/safety/traffic equipment products. Create a HIGHLY DETAILED collection structure with MANY specific subcategories.
+
+CRITICAL REQUIREMENTS:
+1. Create 8-15 PARENT categories based on main product types
+2. For EACH parent, create 10-30 SPECIFIC subcategories
+3. Target: 80-200+ total subcategories (the more specific, the better!)
+
+Products to analyze:
+{all_titles}
+
+Return a JSON object with parent categories as keys, and arrays of specific subcategories as values."""
+
+                try:
+                    response = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo-16k",
+                        messages=[
+                            {"role": "system", "content": "You are an expert categorization specialist. Return ONLY valid JSON."},
+                            {"role": "user", "content": collection_prompt}
+                        ],
+                        temperature=0.3,
+                        max_tokens=4000,
+                        request_timeout=180
+                    )
+
+                    result = response.choices[0].message.content.strip()
+                    if "```json" in result:
+                        result = result.split("```json")[1].split("```")[0].strip()
+                    elif "```" in result:
+                        result = result.split("```")[1].split("```")[0].strip()
+
+                    hierarchy = json.loads(result)
+                    suggested_collections = []
+                    parent_mapping = {}
+
+                    for parent, subcategories in hierarchy.items():
+                        for subcat in subcategories:
+                            full_name = f"{parent} > {subcat}"
+                            suggested_collections.append(full_name)
+                            parent_mapping[full_name] = parent
+
+                    store_data('parent_mapping', parent_mapping)
+                    yield f"data: {json.dumps({'type': 'info', 'message': f'Generated {len(suggested_collections)} collections'})}\n\n"
+
+                except Exception as e:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'AI generation failed: {str(e)}'})}\n\n"
+                    return
+
+            # Step 2: Classify products one by one with progress updates
+            collections_dict = {name: [] for name in suggested_collections}
+            product_to_collection = {}
+            collections_list = json.dumps(list(collections_dict.keys()), indent=2)
+
+            for idx in range(1, total_products + 1):
+                product_title = products[idx - 1]['title']
+
+                # Send progress update every 10 products
+                if idx % 10 == 0 or idx == 1:
+                    percentage = int((idx / total_products) * 100)
+                    yield f"data: {json.dumps({'type': 'progress', 'current': idx, 'total': total_products, 'percentage': percentage, 'product': product_title})}\n\n"
+
+                prompt = f"""Classify this product into the MOST SPECIFIC matching collection.
+
+Product: {product_title}
+
+Available collections (format "Parent > Subcategory"):
+{collections_list}
+
+Return ONLY the exact collection name (with " > " format). No explanation, just the collection name."""
+
+                try:
+                    resp = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",
+                        messages=[
+                            {"role": "system", "content": "You are a product classification expert. Return ONLY the collection name from the provided list, nothing else."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.1,
+                        max_tokens=100,
+                        request_timeout=60
+                    )
+
+                    collection_name = resp.choices[0].message.content.strip().strip('"\'')
+
+                    if collection_name in collections_dict:
+                        product_to_collection[idx] = collection_name
+                        collections_dict[collection_name].append(idx)
+                    else:
+                        fallback = max(collections_dict.items(), key=lambda x: len(x[1]) if x[1] else 0)[0]
+                        product_to_collection[idx] = fallback
+                        collections_dict[fallback].append(idx)
+
+                    time.sleep(0.05)
+
+                except Exception as e:
+                    fallback = max(collections_dict.items(), key=lambda x: len(x[1]) if x[1] else 0)[0]
+                    product_to_collection[idx] = fallback
+                    collections_dict[fallback].append(idx)
+
+            # Remove empty collections
+            all_collections = {name: ids for name, ids in collections_dict.items() if ids}
+
+            # Format for display
+            formatted_collections = {}
+            for collection_name, indices in all_collections.items():
+                formatted_collections[collection_name] = [
+                    {"index": idx, "title": products[idx-1]["title"]}
+                    for idx in sorted(indices) if 1 <= idx <= len(products)
+                ]
+
+            # Store results
+            store_data('classified_collections', all_collections)
+
+            # Send completion
+            yield f"data: {json.dumps({'type': 'complete', 'collections': formatted_collections, 'total_collections': len(all_collections), 'total_products': len(products)})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    response = Response(stream_with_context(generate()), mimetype='text/event-stream')
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no'
+    return response
+
 @app.route('/api/update-shopify-stream', methods=['GET'])
 def update_shopify_stream():
     def generate():
