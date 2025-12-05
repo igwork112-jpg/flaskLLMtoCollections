@@ -261,6 +261,13 @@
                 <label for="tag">Product Tag to Filter</label>
                 <input type="text" id="tag" placeholder="e.g., featured, new-arrival">
             </div>
+            <div class="form-group">
+                <label for="collections">Collection Names (Optional - one per line or comma-separated)</label>
+                <textarea id="collections" rows="8" style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 1rem; font-family: inherit; resize: vertical;" placeholder="Traffic Cones > 460mm Cones&#10;Traffic Cones > 500mm Cones&#10;Traffic Cones > 750mm Cones&#10;Water Tanks > Small Tanks (100-1000L)&#10;Water Tanks > Medium Tanks (1000-5000L)&#10;Safety Signs > Speed Limit Signs&#10;Safety Signs > Warning Signs&#10;Safety Barriers > Water-Filled Barriers&#10;...or leave empty for AI to generate collections automatically"></textarea>
+                <small style="color: #666; display: block; margin-top: 8px;">
+                    💡 Tip: Provide your own collections for full control, or leave empty to let AI generate them automatically
+                </small>
+            </div>
             <button class="btn btn-primary" onclick="fetchProducts()" id="fetch-btn">
                 <span id="fetch-spinner" class="spinner hidden"></span>
                 <span id="fetch-text">Fetch Products</span>
@@ -375,13 +382,32 @@
 
         async function classifyProducts() {
             setLoading('classify', true);
-            log('\n🤖 Sending to AI for classification...', 'info');
-            log('⏳ This may take a moment for large product lists...', 'info');
+
+            // Get user-provided collections (if any)
+            const collectionsText = document.getElementById('collections').value.trim();
+            let userCollections = [];
+
+            if (collectionsText) {
+                // Parse collections (support both newlines and commas)
+                userCollections = collectionsText
+                    .split(/[\n,]+/)
+                    .map(c => c.trim())
+                    .filter(c => c.length > 0);
+
+                log(`\n📋 Using ${userCollections.length} custom collections`, 'info');
+                log('🤖 AI will classify products into your collections...', 'info');
+            } else {
+                log('\n🤖 AI will generate collections automatically...', 'info');
+                log('⏳ This may take a moment for large product lists...', 'info');
+            }
 
             try {
                 const response = await fetch('/api/classify', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_collections: userCollections.length > 0 ? userCollections : null
+                    })
                 });
 
                 const data = await response.json();

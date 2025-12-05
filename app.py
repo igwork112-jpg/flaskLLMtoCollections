@@ -170,32 +170,56 @@ def fetch_products():
 def classify_products():
     try:
         products = get_data('products', [])
-        
+
         print(f"DEBUG: Retrieved {len(products)} products from memory store")
-        
+
         if not products:
             return jsonify({"success": False, "error": "No products found. Fetch products first."}), 400
-        
+
         if not OPENAI_API_KEY:
             return jsonify({"success": False, "error": "OpenAI API key not configured. Add OPENAI_API_KEY to .env file"}), 400
-        
+
         openai.api_key = OPENAI_API_KEY
-        
+
         total_products = len(products)
         print(f"\n{'='*60}")
         print(f"STARTING CLASSIFICATION: {total_products} products")
         print(f"{'='*60}\n")
-        
-        # STEP 1: Analyze ALL products and create MANY detailed collections
-        print(f"Step 1: Analyzing {total_products} products to generate DETAILED collection hierarchy...")
-        print(f"  Creating 50-150+ specific collections based on product types, sizes, and features...")
 
-        # Use MORE products for better analysis (up to 1000)
-        sample_count = min(total_products, 1000)
-        all_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_count)])
-        print(f"  Analyzing {sample_count} products...")
+        # Check if user provided custom collections
+        request_data = request.json or {}
+        user_collections = request_data.get('user_collections', None)
 
-        collection_prompt = f"""You are analyzing {sample_count} construction/safety/traffic equipment products. Create a HIGHLY DETAILED collection structure with MANY specific subcategories.
+        if user_collections and len(user_collections) > 0:
+            # User provided collections - use them directly
+            print(f"Step 1: Using {len(user_collections)} user-provided collections")
+            print(f"  Collections: {user_collections[:5]}{'...' if len(user_collections) > 5 else ''}\n")
+
+            suggested_collections = user_collections
+
+            # Extract parent mapping if hierarchical format used
+            parent_mapping = {}
+            for col in suggested_collections:
+                if " > " in col:
+                    parent = col.split(" > ")[0]
+                    parent_mapping[col] = parent
+
+            store_data('parent_mapping', parent_mapping)
+        else:
+            # No user collections - generate automatically with AI
+            print("Step 1: No custom collections provided - AI will generate them automatically\n")
+
+        # STEP 1: Analyze ALL products and create MANY detailed collections (only if user didn't provide them)
+        if not user_collections:
+            print(f"  Analyzing {total_products} products to generate DETAILED collection hierarchy...")
+            print(f"  Creating 50-150+ specific collections based on product types, sizes, and features...")
+
+            # Use MORE products for better analysis (up to 1000)
+            sample_count = min(total_products, 1000)
+            all_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_count)])
+            print(f"  Analyzing {sample_count} products...")
+
+            collection_prompt = f"""You are analyzing {sample_count} construction/safety/traffic equipment products. Create a HIGHLY DETAILED collection structure with MANY specific subcategories.
 
 CRITICAL REQUIREMENTS:
 1. Create 8-15 PARENT categories based on main product types
