@@ -438,8 +438,16 @@
                             log(`ℹ️ ${data.message}`, 'info');
                             break;
 
+                        case 'batch_start':
+                            log(`\n📦 Starting Batch ${data.batch}/${data.total_batches} (Products ${data.start}-${data.end})`, 'info');
+                            break;
+
+                        case 'batch_complete':
+                            log(`✓ Batch ${data.batch}/${data.total_batches} complete (${data.products_classified} products classified)`, 'success');
+                            break;
+
                         case 'progress':
-                            const progressText = `${data.percentage}% (${data.current}/${data.total}) - ${data.product.substring(0, 60)}...`;
+                            const progressText = `${data.percentage}% (${data.current}/${data.total}) | Batch ${data.batch}: ${data.batch_progress}% - ${data.product.substring(0, 50)}...`;
                             document.getElementById('progress-text').textContent = progressText;
                             break;
 

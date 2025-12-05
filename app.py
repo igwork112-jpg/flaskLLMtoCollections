@@ -686,20 +686,32 @@ Return a JSON object with parent categories as keys, and arrays of specific subc
                     yield f"data: {json.dumps({'type': 'error', 'message': f'AI generation failed: {str(e)}'})}\n\n"
                     return
 
-            # Step 2: Classify products one by one with progress updates
+            # Step 2: Classify products in batches with progress updates
+            BATCH_SIZE = 500
+            total_batches = (total_products + BATCH_SIZE - 1) // BATCH_SIZE  # Ceiling division
+
             collections_dict = {name: [] for name in suggested_collections}
             product_to_collection = {}
             collections_list = json.dumps(list(collections_dict.keys()), indent=2)
 
-            for idx in range(1, total_products + 1):
-                product_title = products[idx - 1]['title']
+            yield f"data: {json.dumps({'type': 'info', 'message': f'Processing {total_products} products in {total_batches} batches of {BATCH_SIZE}'})}\n\n"
 
-                # Send progress update every 10 products
-                if idx % 10 == 0 or idx == 1:
-                    percentage = int((idx / total_products) * 100)
-                    yield f"data: {json.dumps({'type': 'progress', 'current': idx, 'total': total_products, 'percentage': percentage, 'product': product_title})}\n\n"
+            for batch_num in range(total_batches):
+                batch_start = batch_num * BATCH_SIZE + 1
+                batch_end = min((batch_num + 1) * BATCH_SIZE, total_products)
 
-                prompt = f"""Classify this product into the MOST SPECIFIC matching collection.
+                yield f"data: {json.dumps({'type': 'batch_start', 'batch': batch_num + 1, 'total_batches': total_batches, 'start': batch_start, 'end': batch_end})}\n\n"
+
+                for idx in range(batch_start, batch_end + 1):
+                    product_title = products[idx - 1]['title']
+
+                    # Send progress update every 10 products
+                    if idx % 10 == 0 or idx == batch_start:
+                        percentage = int((idx / total_products) * 100)
+                        batch_progress = int(((idx - batch_start + 1) / (batch_end - batch_start + 1)) * 100)
+                        yield f"data: {json.dumps({'type': 'progress', 'current': idx, 'total': total_products, 'percentage': percentage, 'batch': batch_num + 1, 'batch_progress': batch_progress, 'product': product_title})}\n\n"
+
+                    prompt = f"""Classify this product into the MOST SPECIFIC matching collection.
 
 Product: {product_title}
 
@@ -708,34 +720,37 @@ Available collections (format "Parent > Subcategory"):
 
 Return ONLY the exact collection name (with " > " format). No explanation, just the collection name."""
 
-                try:
-                    resp = openai.ChatCompletion.create(
-                        model="gpt-3.5-turbo",
-                        messages=[
-                            {"role": "system", "content": "You are a product classification expert. Return ONLY the collection name from the provided list, nothing else."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        temperature=0.1,
-                        max_tokens=100,
-                        request_timeout=60
-                    )
+                    try:
+                        resp = openai.ChatCompletion.create(
+                            model="gpt-3.5-turbo",
+                            messages=[
+                                {"role": "system", "content": "You are a product classification expert. Return ONLY the collection name from the provided list, nothing else."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.1,
+                            max_tokens=100,
+                            request_timeout=60
+                        )
 
-                    collection_name = resp.choices[0].message.content.strip().strip('"\'')
+                        collection_name = resp.choices[0].message.content.strip().strip('"\'')
 
-                    if collection_name in collections_dict:
-                        product_to_collection[idx] = collection_name
-                        collections_dict[collection_name].append(idx)
-                    else:
+                        if collection_name in collections_dict:
+                            product_to_collection[idx] = collection_name
+                            collections_dict[collection_name].append(idx)
+                        else:
+                            fallback = max(collections_dict.items(), key=lambda x: len(x[1]) if x[1] else 0)[0]
+                            product_to_collection[idx] = fallback
+                            collections_dict[fallback].append(idx)
+
+                        time.sleep(0.05)
+
+                    except Exception as e:
                         fallback = max(collections_dict.items(), key=lambda x: len(x[1]) if x[1] else 0)[0]
                         product_to_collection[idx] = fallback
                         collections_dict[fallback].append(idx)
 
-                    time.sleep(0.05)
-
-                except Exception as e:
-                    fallback = max(collections_dict.items(), key=lambda x: len(x[1]) if x[1] else 0)[0]
-                    product_to_collection[idx] = fallback
-                    collections_dict[fallback].append(idx)
+                # Batch complete
+                yield f"data: {json.dumps({'type': 'batch_complete', 'batch': batch_num + 1, 'total_batches': total_batches, 'products_classified': batch_end})}\n\n"
 
             # Remove empty collections
             all_collections = {name: ids for name, ids in collections_dict.items() if ids}
