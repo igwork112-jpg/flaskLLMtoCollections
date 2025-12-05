@@ -298,89 +298,89 @@ CRITICAL SUCCESS CRITERIA:
 
 REMEMBER: This is construction/safety equipment - use technical specifications!"""
 
-        try:
-            print(f"  Generating collection hierarchy from {sample_count} products...")
-            print(f"  This may take 30-60 seconds...")
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo-16k",  # Use 16k model for larger responses
-                messages=[
-                    {"role": "system", "content": "You are an expert construction/safety equipment categorization specialist. Create MANY highly specific subcategories (minimum 80, ideally 100-150+). Separate products by size, capacity, material, and type. Return ONLY valid JSON - no markdown, no explanations."},
-                    {"role": "user", "content": collection_prompt}
-                ],
-                temperature=0.3,
-                max_tokens=4000,  # Large limit for many collections
-                request_timeout=90
-            )
+            try:
+                print(f"  Generating collection hierarchy from {sample_count} products...")
+                print(f"  This may take 30-60 seconds...")
+                response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo-16k",  # Use 16k model for larger responses
+                    messages=[
+                        {"role": "system", "content": "You are an expert construction/safety equipment categorization specialist. Create MANY highly specific subcategories (minimum 80, ideally 100-150+). Separate products by size, capacity, material, and type. Return ONLY valid JSON - no markdown, no explanations."},
+                        {"role": "user", "content": collection_prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=4000,  # Large limit for many collections
+                    request_timeout=90
+                )
 
-            result = response.choices[0].message.content.strip()
+                result = response.choices[0].message.content.strip()
 
-            # More robust JSON extraction
-            if "```json" in result:
-                result = result.split("```json")[1].split("```")[0].strip()
-            elif "```" in result:
-                result = result.split("```")[1].split("```")[0].strip()
+                # More robust JSON extraction
+                if "```json" in result:
+                    result = result.split("```json")[1].split("```")[0].strip()
+                elif "```" in result:
+                    result = result.split("```")[1].split("```")[0].strip()
 
-            # Remove any leading/trailing whitespace and quotes
-            result = result.strip().strip('`').strip()
+                # Remove any leading/trailing whitespace and quotes
+                result = result.strip().strip('`').strip()
 
-            # Try to find JSON object bounds
-            if not result.startswith('{'):
-                start_idx = result.find('{')
-                if start_idx != -1:
-                    result = result[start_idx:]
+                # Try to find JSON object bounds
+                if not result.startswith('{'):
+                    start_idx = result.find('{')
+                    if start_idx != -1:
+                        result = result[start_idx:]
 
-            if not result.endswith('}'):
-                end_idx = result.rfind('}')
-                if end_idx != -1:
-                    result = result[:end_idx+1]
+                if not result.endswith('}'):
+                    end_idx = result.rfind('}')
+                    if end_idx != -1:
+                        result = result[:end_idx+1]
 
-            print(f"  Parsing AI response (length: {len(result)} chars)...")
-            hierarchy = json.loads(result)
+                print(f"  Parsing AI response (length: {len(result)} chars)...")
+                hierarchy = json.loads(result)
 
-            # Flatten hierarchy into subcategories with parent prefix
-            suggested_collections = []
-            parent_mapping = {}  # Track which parent each subcategory belongs to
+                # Flatten hierarchy into subcategories with parent prefix
+                suggested_collections = []
+                parent_mapping = {}  # Track which parent each subcategory belongs to
 
-            for parent, subcategories in hierarchy.items():
-                for subcat in subcategories:
-                    # Format: "Parent > Subcategory" for Shopify
-                    full_name = f"{parent} > {subcat}"
-                    suggested_collections.append(full_name)
-                    parent_mapping[full_name] = parent
+                for parent, subcategories in hierarchy.items():
+                    for subcat in subcategories:
+                        # Format: "Parent > Subcategory" for Shopify
+                        full_name = f"{parent} > {subcat}"
+                        suggested_collections.append(full_name)
+                        parent_mapping[full_name] = parent
 
-            print(f"✓ Got {len(hierarchy)} parent categories")
-            print(f"✓ Got {len(suggested_collections)} total subcategories")
+                print(f"✓ Got {len(hierarchy)} parent categories")
+                print(f"✓ Got {len(suggested_collections)} total subcategories")
 
-            # Validate we have enough collections
-            if len(suggested_collections) < 50:
-                print(f"  ⚠️ WARNING: Only {len(suggested_collections)} collections created!")
-                print(f"  ⚠️ Expected 80-150+ for detailed categorization")
-                print(f"  ⚠️ Products may be grouped too broadly")
-            elif len(suggested_collections) < 80:
-                print(f"  ⚠️ Got {len(suggested_collections)} collections (recommended: 80+)")
-            else:
-                print(f"  ✓ Excellent! {len(suggested_collections)} collections will provide detailed organization")
+                # Validate we have enough collections
+                if len(suggested_collections) < 50:
+                    print(f"  ⚠️ WARNING: Only {len(suggested_collections)} collections created!")
+                    print(f"  ⚠️ Expected 80-150+ for detailed categorization")
+                    print(f"  ⚠️ Products may be grouped too broadly")
+                elif len(suggested_collections) < 80:
+                    print(f"  ⚠️ Got {len(suggested_collections)} collections (recommended: 80+)")
+                else:
+                    print(f"  ✓ Excellent! {len(suggested_collections)} collections will provide detailed organization")
 
-            # Store parent mapping for later use
-            store_data('parent_mapping', parent_mapping)
+                # Store parent mapping for later use
+                store_data('parent_mapping', parent_mapping)
 
-        except Exception as e:
-            print(f"⚠️ Error getting hierarchical collections: {e}")
-            print(f"⚠️ Using default construction/safety equipment structure")
-            suggested_collections = [
-                "Traffic Cones > 460mm-500mm Cones", "Traffic Cones > 750mm Cones", "Traffic Cones > 1 Metre Cones",
-                "Water Tanks > Small Tanks (100-1000L)", "Water Tanks > Medium Tanks (1000-5000L)", "Water Tanks > Large Tanks (5000L+)",
-                "Water Tanks > Bunded Tanks", "Water Tanks > Underground Tanks",
-                "Traffic Signs > Speed Limit Signs", "Traffic Signs > Warning Signs", "Traffic Signs > Quick-Fit Signs",
-                "Traffic Signs > Metal Signs", "Traffic Signs > Supplementary Plates",
-                "Safety Barriers > Water-Filled Barriers", "Safety Barriers > Pedestrian Barriers", "Safety Barriers > Temporary Fencing",
-                "Safety Barriers > Height Restrictors", "Safety Barriers > Crowd Control",
-                "Construction Equipment > Mortar Tubs", "Construction Equipment > Builders Buckets", "Construction Equipment > Hand Tools",
-                "Safety PPE > High-Vis Clothing", "Safety PPE > Work Gloves", "Safety PPE > Safety Boots",
-                "Site Equipment > Cable Ramps", "Site Equipment > Anti-Slip Matting", "Site Equipment > Ground Protection"
-            ]
-            parent_mapping = {col: col.split(" > ")[0] for col in suggested_collections}
-            store_data('parent_mapping', parent_mapping)
+            except Exception as e:
+                print(f"⚠️ Error getting hierarchical collections: {e}")
+                print(f"⚠️ Using default construction/safety equipment structure")
+                suggested_collections = [
+                    "Traffic Cones > 460mm-500mm Cones", "Traffic Cones > 750mm Cones", "Traffic Cones > 1 Metre Cones",
+                    "Water Tanks > Small Tanks (100-1000L)", "Water Tanks > Medium Tanks (1000-5000L)", "Water Tanks > Large Tanks (5000L+)",
+                    "Water Tanks > Bunded Tanks", "Water Tanks > Underground Tanks",
+                    "Traffic Signs > Speed Limit Signs", "Traffic Signs > Warning Signs", "Traffic Signs > Quick-Fit Signs",
+                    "Traffic Signs > Metal Signs", "Traffic Signs > Supplementary Plates",
+                    "Safety Barriers > Water-Filled Barriers", "Safety Barriers > Pedestrian Barriers", "Safety Barriers > Temporary Fencing",
+                    "Safety Barriers > Height Restrictors", "Safety Barriers > Crowd Control",
+                    "Construction Equipment > Mortar Tubs", "Construction Equipment > Builders Buckets", "Construction Equipment > Hand Tools",
+                    "Safety PPE > High-Vis Clothing", "Safety PPE > Work Gloves", "Safety PPE > Safety Boots",
+                    "Site Equipment > Cable Ramps", "Site Equipment > Anti-Slip Matting", "Site Equipment > Ground Protection"
+                ]
+                parent_mapping = {col: col.split(" > ")[0] for col in suggested_collections}
+                store_data('parent_mapping', parent_mapping)
         
         # STEP 2: Classify products ONE BY ONE
         print(f"\nStep 2: Classifying {total_products} products one by one...")
