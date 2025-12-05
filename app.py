@@ -551,7 +551,8 @@ Be PRECISE and choose the most granular match."""
         return jsonify({
             "success": True,
             "collections": formatted_collections,
-            "batches_processed": (len(products) + batch_size - 1) // batch_size
+            "total_collections": len(all_collections),
+            "total_products": total_assigned
         })
         
     except Exception as e:
