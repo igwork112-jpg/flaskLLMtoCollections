@@ -188,8 +188,16 @@ def classify_products():
         
         # STEP 1: Get hierarchical collection structure from AI (Parent → Subcategories)
         print("Step 1: Getting hierarchical collection structure...")
-        sample_size = min(200, total_products)  # Larger sample for better analysis
-        sample_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_size)])
+        # Use strategic sampling for large datasets (faster while still comprehensive)
+        if total_products > 500:
+            # Sample evenly distributed products for better coverage
+            sample_size = 150
+            step = total_products // sample_size
+            sample_indices = [i * step for i in range(sample_size)]
+            sample_titles = "\n".join([f"{i+1}. {products[idx]['title']}" for i, idx in enumerate(sample_indices)])
+        else:
+            sample_size = min(100, total_products)
+            sample_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_size)])
 
         collection_prompt = f"""Analyze these products and create a DETAILED HIERARCHICAL collection structure with parent categories and specific subcategories.
 
@@ -244,14 +252,16 @@ CRITICAL RULES:
 6. Subcategories are what products will actually be assigned to (not parents)"""
 
         try:
+            print(f"  Analyzing {sample_size} products to generate collection hierarchy...")
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are an expert e-commerce product categorization specialist. Create DETAILED, SPECIFIC hierarchical collections with many subcategories. Return ONLY valid JSON."},
                     {"role": "user", "content": collection_prompt}
                 ],
-                temperature=0.4,
-                max_tokens=2000  # Increased for more categories
+                temperature=0.3,  # Slightly lower for consistency
+                max_tokens=1800,  # Optimized for speed
+                request_timeout=30  # Add timeout
             )
 
             result = response.choices[0].message.content.strip()
@@ -301,15 +311,20 @@ CRITICAL RULES:
         # With more collections, we need smaller batches for better accuracy
         num_collections = len(suggested_collections)
 
-        if num_collections > 100:
+        if num_collections > 150:
+            # Very many collections = very small batches
+            batch_size = 15
+        elif num_collections > 100:
             # Many collections = smaller batches for better accuracy
-            batch_size = 25
+            batch_size = 20
         elif num_collections > 50:
-            batch_size = 35
+            batch_size = 30
         elif total_products > 1000:
-            batch_size = 50
-        else:
             batch_size = 40
+        else:
+            batch_size = 35
+
+        print(f"  Using batch size of {batch_size} for {num_collections} collections")
         
         total_batches = (total_products + batch_size - 1) // batch_size
         
@@ -366,8 +381,9 @@ Be SPECIFIC and ACCURATE. Match products to the most appropriate granular subcat
                         {"role": "system", "content": "You are an expert product classifier. Analyze each product carefully and assign it to the MOST SPECIFIC matching subcategory. Return ONLY a JSON object mapping product numbers to collection names using exact format \"Parent > Subcategory\". Each product number must appear exactly once."},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.2,  # Slightly higher for creative matching
-                    max_tokens=2500   # Increased for many collections
+                    temperature=0.2,
+                    max_tokens=2000,  # Optimized for speed
+                    request_timeout=45  # Longer timeout for batch processing
                 )
                 
                 text = resp.choices[0].message.content.strip()
@@ -393,7 +409,7 @@ Be SPECIFIC and ACCURATE. Match products to the most appropriate granular subcat
                 expected_range = set(range(batch_start + 1, batch_end + 1))
                 ai_products = [int(k) for k in ai_response.keys() if k.isdigit()]
                 ai_products_set = set(ai_products)
-                
+
                 # Check for products outside batch range
                 unexpected = ai_products_set - expected_range
                 if unexpected:
@@ -401,11 +417,16 @@ Be SPECIFIC and ACCURATE. Match products to the most appropriate granular subcat
                     # Remove them
                     for prod in unexpected:
                         ai_response.pop(str(prod), None)
-                
+
                 # Check for duplicates in AI response (shouldn't happen but let's verify)
                 if len(ai_products) != len(ai_products_set):
                     duplicates_in_response = len(ai_products) - len(ai_products_set)
                     print(f"  ⚠️ AI returned {duplicates_in_response} duplicate product numbers in response")
+
+                # Check coverage
+                missing_in_response = expected_range - ai_products_set
+                if missing_in_response and len(missing_in_response) > 5:
+                    print(f"  ⚠️ AI missed {len(missing_in_response)} products in this batch (will re-classify later)")
                 
             except json.JSONDecodeError as e:
                 print(f"  ⚠️ JSON parsing failed: {e}")
@@ -436,12 +457,9 @@ Be SPECIFIC and ACCURATE. Match products to the most appropriate granular subcat
             
             print(f"  ✓ Assigned {batch_count} products")
             print(f"  Total assigned: {len(product_to_collection)}/{total_products}")
-            
-            # Rate limiting (adaptive based on dataset size)
-            if total_batches > 20:
-                time.sleep(1)  # Longer delay for very large datasets
-            elif total_batches > 5:
-                time.sleep(0.5)
+
+            # Minimal rate limiting for speed (OpenAI has generous limits for gpt-3.5-turbo)
+            time.sleep(0.2)  # Small delay to avoid rate limits
         
         # STEP 3: Verification and re-classification
         print(f"\nStep 3: Verification and re-classification...")
@@ -453,14 +471,25 @@ Be SPECIFIC and ACCURATE. Match products to the most appropriate granular subcat
                 missing.append(i)
         
         if missing:
-            print(f"  ⚠️ Found {len(missing)} unclassified products, using AI to find best matches...")
-            
-            # Re-classify missing products using AI
-            for product_idx in missing:
-                product_title = products[product_idx - 1]['title']
-                
-                # Ask AI to find the best collection for this specific product
-                reclassify_prompt = f"""Given this product and available hierarchical collections, choose the MOST SPECIFIC matching collection.
+            print(f"  ⚠️ Found {len(missing)} unclassified products")
+
+            # If too many missing, use fast fallback instead of individual AI calls
+            if len(missing) > 100:
+                print(f"  ⚠️ Too many missing products ({len(missing)}), using smart fallback assignment...")
+                # Assign to most populated collection (likely a good general category)
+                fallback = max(collections_dict.items(), key=lambda x: len(x[1]))[0]
+                for product_idx in missing:
+                    product_to_collection[product_idx] = fallback
+                    collections_dict[fallback].append(product_idx)
+                print(f"  ✓ Assigned {len(missing)} products to '{fallback}'")
+            else:
+                print(f"  Using AI to find best matches for {len(missing)} products...")
+                # Re-classify missing products using AI
+                for product_idx in missing:
+                    product_title = products[product_idx - 1]['title']
+
+                    # Ask AI to find the best collection for this specific product
+                    reclassify_prompt = f"""Given this product and available hierarchical collections, choose the MOST SPECIFIC matching collection.
 
 Product: {product_title}
 
@@ -471,39 +500,40 @@ Analyze the product and return ONLY the exact collection name (with " > " format
 Consider: demographics (Men's/Women's/Kids'), style (Running/Casual/Formal), type, and material.
 Be specific and precise. Return the exact collection name from the list above."""
 
-                try:
-                    resp = openai.ChatCompletion.create(
-                        model="gpt-3.5-turbo",
-                        messages=[
-                            {"role": "system", "content": "You are a product categorization expert. Return ONLY the collection name, nothing else."},
-                            {"role": "user", "content": reclassify_prompt}
-                        ],
-                        temperature=0.2,
-                        max_tokens=50
-                    )
-                    
-                    best_collection = resp.choices[0].message.content.strip().strip('"\'')
-                    
-                    # Validate the collection exists
-                    if best_collection in collections_dict:
-                        product_to_collection[product_idx] = best_collection
-                        collections_dict[best_collection].append(product_idx)
-                        print(f"    ✓ Product {product_idx} → '{best_collection}'")
-                    else:
-                        # If AI returns invalid collection, use the first one
+                    try:
+                        resp = openai.ChatCompletion.create(
+                            model="gpt-3.5-turbo",
+                            messages=[
+                                {"role": "system", "content": "You are a product categorization expert. Return ONLY the collection name, nothing else."},
+                                {"role": "user", "content": reclassify_prompt}
+                            ],
+                            temperature=0.2,
+                            max_tokens=50,
+                            request_timeout=20
+                        )
+
+                        best_collection = resp.choices[0].message.content.strip().strip('"\'')
+
+                        # Validate the collection exists
+                        if best_collection in collections_dict:
+                            product_to_collection[product_idx] = best_collection
+                            collections_dict[best_collection].append(product_idx)
+                            print(f"    ✓ Product {product_idx} → '{best_collection}'")
+                        else:
+                            # If AI returns invalid collection, use the first one
+                            fallback = list(collections_dict.keys())[0]
+                            product_to_collection[product_idx] = fallback
+                            collections_dict[fallback].append(product_idx)
+                            print(f"    ⚠️ Product {product_idx} → '{fallback}' (AI returned invalid collection)")
+
+                        time.sleep(0.1)  # Minimal rate limiting
+
+                    except Exception as e:
+                        print(f"    ⚠️ Error re-classifying product {product_idx}: {e}")
+                        # Fallback to first collection only on error
                         fallback = list(collections_dict.keys())[0]
                         product_to_collection[product_idx] = fallback
                         collections_dict[fallback].append(product_idx)
-                        print(f"    ⚠️ Product {product_idx} → '{fallback}' (AI returned invalid collection)")
-                    
-                    time.sleep(0.3)  # Rate limiting
-                    
-                except Exception as e:
-                    print(f"    ⚠️ Error re-classifying product {product_idx}: {e}")
-                    # Fallback to first collection only on error
-                    fallback = list(collections_dict.keys())[0]
-                    product_to_collection[product_idx] = fallback
-                    collections_dict[fallback].append(product_idx)
         
         # Remove empty collections
         all_collections = {name: ids for name, ids in collections_dict.items() if ids}
