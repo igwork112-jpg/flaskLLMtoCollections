@@ -186,88 +186,131 @@ def classify_products():
         print(f"STARTING CLASSIFICATION: {total_products} products")
         print(f"{'='*60}\n")
         
-        # STEP 1: Get hierarchical collection structure from AI (Parent → Subcategories)
-        print("Step 1: Getting hierarchical collection structure...")
-        # Use strategic sampling for large datasets (faster while still comprehensive)
-        if total_products > 500:
-            # Sample evenly distributed products for better coverage
-            sample_size = 150
-            step = total_products // sample_size
-            sample_indices = [i * step for i in range(sample_size)]
-            sample_titles = "\n".join([f"{i+1}. {products[idx]['title']}" for i, idx in enumerate(sample_indices)])
-        else:
-            sample_size = min(100, total_products)
-            sample_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_size)])
+        # STEP 1: Analyze ALL products and create MANY detailed collections
+        print(f"Step 1: Analyzing {total_products} products to generate DETAILED collection hierarchy...")
+        print(f"  Creating 50-150+ specific collections based on product types, sizes, and features...")
 
-        collection_prompt = f"""Analyze these products and create a DETAILED HIERARCHICAL collection structure with parent categories and specific subcategories.
+        # Use MORE products for better analysis (up to 1000)
+        sample_count = min(total_products, 1000)
+        all_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_count)])
+        print(f"  Analyzing {sample_count} products...")
 
-REQUIREMENTS:
-- Create 5-15 PARENT categories (broad product types)
-- For EACH parent, create 5-20 SPECIFIC subcategories (granular product types)
-- Aim for 50-200+ total subcategories across all parents
-- Subcategories should be HIGHLY SPECIFIC and DETAILED
-- Use demographic segmentation: Men's, Women's, Kids', Unisex
-- Use size/type variations: Ankle, Crew, Knee-High, Compression
-- Use material/style details: Cotton, Wool, Running, Casual, Formal
+        collection_prompt = f"""You are analyzing {sample_count} construction/safety/traffic equipment products. Create a HIGHLY DETAILED collection structure with MANY specific subcategories.
 
-EXCELLENT EXAMPLES:
-Parent: "Footwear"
-  Subcategories: ["Men's Running Shoes", "Women's Running Shoes", "Kids' Running Shoes",
-                  "Men's Casual Shoes", "Women's Casual Shoes", "Kids' Casual Shoes",
-                  "Men's Boots", "Women's Boots", "Kids' Boots",
-                  "Men's Dress Shoes", "Women's Dress Shoes",
-                  "Men's Athletic Socks", "Women's Athletic Socks", "Kids' Athletic Socks",
-                  "Men's Dress Socks", "Women's Dress Socks",
-                  "Men's Casual Socks", "Women's Casual Socks", "Kids' Casual Socks",
-                  "Compression Socks", "Ankle Socks", "Crew Socks", "Knee-High Socks"]
+CRITICAL REQUIREMENTS:
+1. Create 8-15 PARENT categories based on main product types
+2. For EACH parent, create 10-30 SPECIFIC subcategories
+3. Target: 80-200+ total subcategories (the more specific, the better!)
+4. Use SIZE/CAPACITY as primary differentiator (500mm cones vs 750mm cones vs 1m cones)
+5. Use PRODUCT TYPE variations (Traffic Cones, Water Tanks, Safety Signs, Barriers, etc.)
+6. Use MATERIAL/CONSTRUCTION (Metal, Plastic, Aluminum, Steel, etc.)
+7. Use CAPACITY for tanks (100L, 500L, 1000L, 5000L, etc.)
+8. Use SPECIFIC FEATURES (Bunded, Stackable, Heavy Duty, Premium, etc.)
 
-Parent: "Apparel"
-  Subcategories: ["Men's T-Shirts", "Women's T-Shirts", "Kids' T-Shirts",
-                  "Men's Hoodies", "Women's Hoodies", "Kids' Hoodies",
-                  "Men's Jeans", "Women's Jeans", "Kids' Jeans",
-                  "Men's Shorts", "Women's Shorts", "Kids' Shorts",
-                  "Men's Jackets", "Women's Jackets", "Kids' Jackets"]
+ANALYSIS STRATEGY FOR THIS CATALOG:
+- Traffic Cones → Separate by HEIGHT (460mm, 500mm, 750mm, 1m, etc.)
+- Water Tanks → Separate by CAPACITY (500L, 1000L, 5000L, Underground, Bunded, etc.)
+- Safety Signs → Separate by TYPE (Speed Limit Signs, Warning Signs, Directional, Quick-Fit, Metal, etc.)
+- Barriers → Separate by TYPE (Water-Filled, Pedestrian, Crowd Control, Height Restrictors, etc.)
+- Construction Equipment → Separate by CATEGORY (Buckets, Tubs, Tools, Flooring, etc.)
+- Safety Gear → Separate by TYPE (Coveralls, Gloves, Boots, High-Vis, etc.)
 
-Parent: "Electronics"
-  Subcategories: ["Smartphones", "Tablets", "Laptops", "Desktop Computers",
-                  "Headphones", "Earbuds", "Speakers", "Smart Watches",
-                  "Cameras", "Phone Cases", "Screen Protectors", "Chargers", "Cables"]
+EXAMPLES OF GOOD GRANULARITY:
+Parent: "Traffic Cones"
+  Subcategories: ["460mm Traffic Cones", "500mm Traffic Cones", "750mm Traffic Cones",
+                  "1 Metre Traffic Cones", "Sand Weighted Traffic Cones", "Self-Weighted Traffic Cones",
+                  "Chapter 8 Traffic Cones", "No Waiting Cones", "Cone Accessories"]
 
-Products to analyze (sample of {sample_size} from {total_products} total):
-{sample_titles}
+Parent: "Water Storage Tanks"
+  Subcategories: ["100-500 Litre Water Tanks", "500-1000 Litre Water Tanks", "1000-2000 Litre Water Tanks",
+                  "2000-5000 Litre Water Tanks", "5000-10000 Litre Water Tanks", "Underground Water Tanks",
+                  "Bunded Water Tanks", "Potable Water Tanks", "Baffled Water Tanks", "Cylindrical Water Tanks"]
+
+Parent: "Traffic Safety Signs"
+  Subcategories: ["Speed Limit Signs (Metal)", "Speed Limit Signs (Quick-Fit)", "Warning Triangle Signs",
+                  "Directional Arrow Signs", "Supplementary Plates", "Custom Signs", "Road Closure Signs",
+                  "Pedestrian Signs", "Roadworks Signs", "Cone Mounted Signs"]
+
+Parent: "Safety Barriers"
+  Subcategories: ["Water-Filled Barriers 1m", "Water-Filled Barriers 2m", "Pedestrian Barriers",
+                  "Crowd Control Barriers", "Height Restriction Barriers", "Temporary Fencing",
+                  "Mesh Barriers", "Chapter 8 Barriers", "Barrier Accessories"]
+
+Parent: "Construction Tools & Equipment"
+  Subcategories: ["Mortar Tubs 100-300L", "Mortar Tubs 300-500L", "Builders Buckets",
+                  "Flooring Tools", "Screeding Equipment", "Trowels & Hand Tools",
+                  "Measuring Tools", "Earth Compaction Tools", "Asphalt Tools"]
+
+Parent: "Safety & PPE"
+  Subcategories: ["High-Visibility Jackets", "High-Visibility Bodywarmers", "Disposable Coveralls",
+                  "Work Trousers", "Safety Boots", "Work Gloves", "Safety Helmets",
+                  "First Aid Kits", "Eye Protection", "Respiratory Protection"]
+
+Parent: "Site Equipment"
+  Subcategories: ["Cable Ramps & Protectors", "Anti-Slip Matting", "Ground Protection Mats",
+                  "Access Mats", "Flooring Sheets", "Scaffold Equipment", "Ladders & Steps",
+                  "Storage Solutions", "Site Furniture", "Waste Management"]
+
+Products to analyze:
+{all_titles}
 
 Return a JSON object with parent categories as keys, and arrays of specific subcategories as values:
 {{
-  "Parent Category 1": ["Specific Sub 1", "Specific Sub 2", "Specific Sub 3", ...],
-  "Parent Category 2": ["Specific Sub 1", "Specific Sub 2", ...],
+  "Traffic Cones": ["460mm Traffic Cones", "500mm Traffic Cones", "750mm Traffic Cones", ...],
+  "Water Storage Tanks": ["100-500 Litre Tanks", "500-1000 Litre Tanks", "Underground Tanks", ...],
+  "Traffic Safety Signs": ["Speed Limit Signs Metal", "Warning Signs", "Quick-Fit Signs", ...],
   ...
 }}
 
-CRITICAL RULES:
-1. Be VERY SPECIFIC in subcategories (e.g., "Men's Running Shoes" not just "Shoes")
-2. Create MANY subcategories (aim for 50-200+ total)
-3. Use demographic splits (Men's/Women's/Kids') whenever applicable
-4. Include style/type variations (Running/Casual/Formal, etc.)
-5. Each subcategory should be unique and descriptive
-6. Subcategories are what products will actually be assigned to (not parents)"""
+CRITICAL SUCCESS CRITERIA:
+1. Minimum 80 total subcategories (more is better - aim for 100-150+)
+2. Be EXTREMELY SPECIFIC with sizes, capacities, and types
+3. Separate by SIZE/CAPACITY first (e.g., "500mm Cones" vs "750mm Cones")
+4. Then by TYPE/FEATURE (e.g., "Bunded Tanks" vs "Underground Tanks")
+5. Each subcategory must be unique and highly descriptive
+6. Look at product titles and identify all size/capacity variations
+7. Create separate subcategories for different materials (Metal, Plastic, Aluminum)
+8. Products will be assigned to subcategories, so make them VERY SPECIFIC!
+
+REMEMBER: This is construction/safety equipment - use technical specifications!"""
 
         try:
-            print(f"  Analyzing {sample_size} products to generate collection hierarchy...")
+            print(f"  Generating collection hierarchy from {sample_count} products...")
+            print(f"  This may take 30-60 seconds...")
             response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
+                model="gpt-3.5-turbo-16k",  # Use 16k model for larger responses
                 messages=[
-                    {"role": "system", "content": "You are an expert e-commerce product categorization specialist. Create DETAILED, SPECIFIC hierarchical collections with many subcategories. Return ONLY valid JSON."},
+                    {"role": "system", "content": "You are an expert construction/safety equipment categorization specialist. Create MANY highly specific subcategories (minimum 80, ideally 100-150+). Separate products by size, capacity, material, and type. Return ONLY valid JSON - no markdown, no explanations."},
                     {"role": "user", "content": collection_prompt}
                 ],
-                temperature=0.3,  # Slightly lower for consistency
-                max_tokens=1800,  # Optimized for speed
-                request_timeout=30  # Add timeout
+                temperature=0.3,
+                max_tokens=4000,  # Large limit for many collections
+                request_timeout=90
             )
 
             result = response.choices[0].message.content.strip()
-            if "```" in result:
-                result = result.split("```")[1].replace("json", "").strip()
 
+            # More robust JSON extraction
+            if "```json" in result:
+                result = result.split("```json")[1].split("```")[0].strip()
+            elif "```" in result:
+                result = result.split("```")[1].split("```")[0].strip()
+
+            # Remove any leading/trailing whitespace and quotes
+            result = result.strip().strip('`').strip()
+
+            # Try to find JSON object bounds
+            if not result.startswith('{'):
+                start_idx = result.find('{')
+                if start_idx != -1:
+                    result = result[start_idx:]
+
+            if not result.endswith('}'):
+                end_idx = result.rfind('}')
+                if end_idx != -1:
+                    result = result[:end_idx+1]
+
+            print(f"  Parsing AI response (length: {len(result)} chars)...")
             hierarchy = json.loads(result)
 
             # Flatten hierarchy into subcategories with parent prefix
@@ -284,256 +327,131 @@ CRITICAL RULES:
             print(f"✓ Got {len(hierarchy)} parent categories")
             print(f"✓ Got {len(suggested_collections)} total subcategories")
 
+            # Validate we have enough collections
+            if len(suggested_collections) < 50:
+                print(f"  ⚠️ WARNING: Only {len(suggested_collections)} collections created!")
+                print(f"  ⚠️ Expected 80-150+ for detailed categorization")
+                print(f"  ⚠️ Products may be grouped too broadly")
+            elif len(suggested_collections) < 80:
+                print(f"  ⚠️ Got {len(suggested_collections)} collections (recommended: 80+)")
+            else:
+                print(f"  ✓ Excellent! {len(suggested_collections)} collections will provide detailed organization")
+
             # Store parent mapping for later use
             store_data('parent_mapping', parent_mapping)
 
         except Exception as e:
             print(f"⚠️ Error getting hierarchical collections: {e}")
-            print(f"⚠️ Using default hierarchical structure")
+            print(f"⚠️ Using default construction/safety equipment structure")
             suggested_collections = [
-                "Apparel > Men's Shirts", "Apparel > Women's Shirts", "Apparel > Kids' Shirts",
-                "Footwear > Men's Shoes", "Footwear > Women's Shoes", "Footwear > Kids' Shoes",
-                "Accessories > Bags", "Accessories > Hats", "Accessories > Belts"
+                "Traffic Cones > 460mm-500mm Cones", "Traffic Cones > 750mm Cones", "Traffic Cones > 1 Metre Cones",
+                "Water Tanks > Small Tanks (100-1000L)", "Water Tanks > Medium Tanks (1000-5000L)", "Water Tanks > Large Tanks (5000L+)",
+                "Water Tanks > Bunded Tanks", "Water Tanks > Underground Tanks",
+                "Traffic Signs > Speed Limit Signs", "Traffic Signs > Warning Signs", "Traffic Signs > Quick-Fit Signs",
+                "Traffic Signs > Metal Signs", "Traffic Signs > Supplementary Plates",
+                "Safety Barriers > Water-Filled Barriers", "Safety Barriers > Pedestrian Barriers", "Safety Barriers > Temporary Fencing",
+                "Safety Barriers > Height Restrictors", "Safety Barriers > Crowd Control",
+                "Construction Equipment > Mortar Tubs", "Construction Equipment > Builders Buckets", "Construction Equipment > Hand Tools",
+                "Safety PPE > High-Vis Clothing", "Safety PPE > Work Gloves", "Safety PPE > Safety Boots",
+                "Site Equipment > Cable Ramps", "Site Equipment > Anti-Slip Matting", "Site Equipment > Ground Protection"
             ]
             parent_mapping = {col: col.split(" > ")[0] for col in suggested_collections}
             store_data('parent_mapping', parent_mapping)
         
-        # STEP 2: Initialize tracking - ONE product = ONE collection
-        print(f"\nStep 2: Classifying {total_products} products...")
-        
+        # STEP 2: Classify products ONE BY ONE
+        print(f"\nStep 2: Classifying {total_products} products one by one...")
+        print(f"  Available collections: {len(suggested_collections)}")
+        print(f"  This will take a few minutes...\n")
+
         # Create empty collections
         collections_dict = {name: [] for name in suggested_collections}
-        
-        # Track assignments: product_idx -> collection_name
+
+        # Track assignments
         product_to_collection = {}
-        
-        # Process in batches (adaptive batch size based on dataset and collection count)
-        # With more collections, we need smaller batches for better accuracy
-        num_collections = len(suggested_collections)
 
-        if num_collections > 150:
-            # Very many collections = very small batches
-            batch_size = 15
-        elif num_collections > 100:
-            # Many collections = smaller batches for better accuracy
-            batch_size = 20
-        elif num_collections > 50:
-            batch_size = 30
-        elif total_products > 1000:
-            batch_size = 40
-        else:
-            batch_size = 35
+        # Collections list for prompt (formatted nicely)
+        collections_list = json.dumps(list(collections_dict.keys()), indent=2)
 
-        print(f"  Using batch size of {batch_size} for {num_collections} collections")
-        
-        total_batches = (total_products + batch_size - 1) // batch_size
-        
-        for batch_num in range(total_batches):
-            batch_start = batch_num * batch_size
-            batch_end = min(batch_start + batch_size, total_products)
-            batch_count = batch_end - batch_start
-            
-            print(f"\nBatch {batch_num + 1}/{total_batches}: Products {batch_start + 1} to {batch_end}")
-            
-            # Build prompt with product numbers
-            batch_lines = []
-            for i in range(batch_count):
-                idx = batch_start + i + 1
-                batch_lines.append(f"{idx}. {products[batch_start + i]['title']}")
-            batch_text = "\n".join(batch_lines)
-            
-            prompt = f"""CRITICAL: Assign each product to EXACTLY ONE specific subcategory. Be PRECISE and DETAILED.
+        # Process each product individually
+        for idx in range(1, total_products + 1):
+            product_title = products[idx - 1]['title']
 
-Available collections (hierarchical format "Parent > Subcategory"):
-{json.dumps(list(collections_dict.keys()), indent=2)}
+            # Progress indicator every 50 products
+            if idx % 50 == 0:
+                print(f"  Progress: {idx}/{total_products} products classified ({int(idx/total_products*100)}%)")
 
-Products to classify:
-{batch_text}
-
-Return JSON mapping each product NUMBER to ONE collection name (use exact format "Parent > Subcategory"):
-{{"1": "Parent > Subcategory", "2": "Parent > Subcategory", ...}}
-
-CLASSIFICATION RULES:
-1. Each product ({batch_start + 1} to {batch_end}) must appear EXACTLY ONCE
-2. Choose the MOST SPECIFIC subcategory that matches the product
-3. Consider demographics: Men's vs Women's vs Kids' vs Unisex
-4. Consider type/style: Running vs Casual vs Formal vs Athletic
-5. Consider material/features when available
-6. If unsure, pick the closest match - don't leave products unassigned
-7. Use the EXACT collection name from the list above (including " > " separator)
-
-EXAMPLES:
-- "Nike Men's Air Max Running Shoes" → "Footwear > Men's Running Shoes"
-- "Women's Cotton Ankle Socks White" → "Footwear > Women's Casual Socks" or "Footwear > Ankle Socks"
-- "Kids Winter Boots Size 5" → "Footwear > Kids' Boots"
-- "Men's Business Dress Socks Black" → "Footwear > Men's Dress Socks"
-- "iPhone 13 Leather Case" → "Electronics > Phone Cases"
-- "Women's Yoga Leggings" → "Apparel > Women's Athletic Wear" (or similar)
-
-Be SPECIFIC and ACCURATE. Match products to the most appropriate granular subcategory."""
-
-            # Get AI response
-            ai_response = {}
-            try:
-                resp = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "You are an expert product classifier. Analyze each product carefully and assign it to the MOST SPECIFIC matching subcategory. Return ONLY a JSON object mapping product numbers to collection names using exact format \"Parent > Subcategory\". Each product number must appear exactly once."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.2,
-                    max_tokens=2000,  # Optimized for speed
-                    request_timeout=45  # Longer timeout for batch processing
-                )
-                
-                text = resp.choices[0].message.content.strip()
-                
-                # Extract JSON from markdown
-                if "```json" in text:
-                    text = text.split("```json")[1].split("```")[0].strip()
-                elif "```" in text:
-                    text = text.split("```")[1].split("```")[0].strip()
-                
-                # Clean up common JSON issues
-                text = text.replace(",\n}", "\n}")  # Trailing comma in object
-                text = text.replace(",\n]", "\n]")  # Trailing comma in array
-                text = text.replace(",}", "}")      # Trailing comma before }
-                text = text.replace(",]", "]")      # Trailing comma before ]
-                
-                # Remove any trailing commas before closing braces (more aggressive)
-                text = re.sub(r',(\s*[}\]])', r'\1', text)
-                
-                ai_response = json.loads(text)
-                
-                # Validate AI response
-                expected_range = set(range(batch_start + 1, batch_end + 1))
-                ai_products = [int(k) for k in ai_response.keys() if k.isdigit()]
-                ai_products_set = set(ai_products)
-
-                # Check for products outside batch range
-                unexpected = ai_products_set - expected_range
-                if unexpected:
-                    print(f"  ⚠️ AI returned products outside batch range: {sorted(unexpected)[:10]}")
-                    # Remove them
-                    for prod in unexpected:
-                        ai_response.pop(str(prod), None)
-
-                # Check for duplicates in AI response (shouldn't happen but let's verify)
-                if len(ai_products) != len(ai_products_set):
-                    duplicates_in_response = len(ai_products) - len(ai_products_set)
-                    print(f"  ⚠️ AI returned {duplicates_in_response} duplicate product numbers in response")
-
-                # Check coverage
-                missing_in_response = expected_range - ai_products_set
-                if missing_in_response and len(missing_in_response) > 5:
-                    print(f"  ⚠️ AI missed {len(missing_in_response)} products in this batch (will re-classify later)")
-                
-            except json.JSONDecodeError as e:
-                print(f"  ⚠️ JSON parsing failed: {e}")
-                print(f"  Problematic JSON (first 500 chars): {text[:500] if 'text' in locals() else 'N/A'}")
-                ai_response = {}
-            except Exception as e:
-                print(f"  ⚠️ AI call failed: {e}")
-                ai_response = {}
-            
-            # Process EACH product in this batch
-            for i in range(batch_count):
-                product_idx = batch_start + i + 1
-                
-                # Get collection from AI
-                collection = ai_response.get(str(product_idx))
-                if not collection or collection not in collections_dict:
-                    # Mark for re-classification instead of fallback
-                    collection = None
-                
-                # CRITICAL: Only assign if not already assigned
-                if product_idx not in product_to_collection:
-                    if collection:
-                        product_to_collection[product_idx] = collection
-                        collections_dict[collection].append(product_idx)
-                    # If no valid collection, leave unassigned for Step 3
-                else:
-                    print(f"  ⚠️ Product {product_idx} already assigned, skipping")
-            
-            print(f"  ✓ Assigned {batch_count} products")
-            print(f"  Total assigned: {len(product_to_collection)}/{total_products}")
-
-            # Minimal rate limiting for speed (OpenAI has generous limits for gpt-3.5-turbo)
-            time.sleep(0.2)  # Small delay to avoid rate limits
-        
-        # STEP 3: Verification and re-classification
-        print(f"\nStep 3: Verification and re-classification...")
-        
-        # Check for missing products
-        missing = []
-        for i in range(1, total_products + 1):
-            if i not in product_to_collection:
-                missing.append(i)
-        
-        if missing:
-            print(f"  ⚠️ Found {len(missing)} unclassified products")
-
-            # If too many missing, use fast fallback instead of individual AI calls
-            if len(missing) > 100:
-                print(f"  ⚠️ Too many missing products ({len(missing)}), using smart fallback assignment...")
-                # Assign to most populated collection (likely a good general category)
-                fallback = max(collections_dict.items(), key=lambda x: len(x[1]))[0]
-                for product_idx in missing:
-                    product_to_collection[product_idx] = fallback
-                    collections_dict[fallback].append(product_idx)
-                print(f"  ✓ Assigned {len(missing)} products to '{fallback}'")
-            else:
-                print(f"  Using AI to find best matches for {len(missing)} products...")
-                # Re-classify missing products using AI
-                for product_idx in missing:
-                    product_title = products[product_idx - 1]['title']
-
-                    # Ask AI to find the best collection for this specific product
-                    reclassify_prompt = f"""Given this product and available hierarchical collections, choose the MOST SPECIFIC matching collection.
+            prompt = f"""Classify this product into the MOST SPECIFIC matching collection.
 
 Product: {product_title}
 
 Available collections (format "Parent > Subcategory"):
-{json.dumps(list(collections_dict.keys()), indent=2)}
+{collections_list}
 
-Analyze the product and return ONLY the exact collection name (with " > " format) that best matches.
-Consider: demographics (Men's/Women's/Kids'), style (Running/Casual/Formal), type, and material.
-Be specific and precise. Return the exact collection name from the list above."""
+Return ONLY the exact collection name (with " > " format). No explanation, just the collection name.
 
-                    try:
-                        resp = openai.ChatCompletion.create(
-                            model="gpt-3.5-turbo",
-                            messages=[
-                                {"role": "system", "content": "You are a product categorization expert. Return ONLY the collection name, nothing else."},
-                                {"role": "user", "content": reclassify_prompt}
-                            ],
-                            temperature=0.2,
-                            max_tokens=50,
-                            request_timeout=20
-                        )
+Consider:
+- Demographics: Men's/Women's/Kids'/Unisex
+- Style: Running/Casual/Formal/Athletic/Industrial/Professional
+- Type and specific features
 
-                        best_collection = resp.choices[0].message.content.strip().strip('"\'')
+Be PRECISE and choose the most granular match."""
 
-                        # Validate the collection exists
-                        if best_collection in collections_dict:
-                            product_to_collection[product_idx] = best_collection
-                            collections_dict[best_collection].append(product_idx)
-                            print(f"    ✓ Product {product_idx} → '{best_collection}'")
-                        else:
-                            # If AI returns invalid collection, use the first one
-                            fallback = list(collections_dict.keys())[0]
-                            product_to_collection[product_idx] = fallback
-                            collections_dict[fallback].append(product_idx)
-                            print(f"    ⚠️ Product {product_idx} → '{fallback}' (AI returned invalid collection)")
+            try:
+                resp = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "You are a product classification expert. Return ONLY the collection name from the provided list, nothing else."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.1,
+                    max_tokens=100,
+                    request_timeout=20
+                )
 
-                        time.sleep(0.1)  # Minimal rate limiting
+                collection_name = resp.choices[0].message.content.strip().strip('"\'')
 
-                    except Exception as e:
-                        print(f"    ⚠️ Error re-classifying product {product_idx}: {e}")
-                        # Fallback to first collection only on error
-                        fallback = list(collections_dict.keys())[0]
-                        product_to_collection[product_idx] = fallback
-                        collections_dict[fallback].append(product_idx)
+                # Validate collection exists
+                if collection_name in collections_dict:
+                    product_to_collection[idx] = collection_name
+                    collections_dict[collection_name].append(idx)
+                else:
+                    # Fallback to most populated collection
+                    fallback = max(collections_dict.items(), key=lambda x: len(x[1]) if x[1] else 0)[0]
+                    product_to_collection[idx] = fallback
+                    collections_dict[fallback].append(idx)
+                    if idx % 50 == 0:  # Only log occasionally to reduce noise
+                        print(f"    ⚠️ Product {idx} got invalid collection, using fallback")
+
+                # Minimal rate limiting
+                time.sleep(0.05)  # 50ms delay = ~20 requests/sec
+
+            except Exception as e:
+                # On error, use fallback
+                fallback = max(collections_dict.items(), key=lambda x: len(x[1]) if x[1] else 0)[0]
+                product_to_collection[idx] = fallback
+                collections_dict[fallback].append(idx)
+                if idx % 100 == 0:  # Only log occasionally
+                    print(f"    ⚠️ Error on product {idx}, using fallback: {str(e)[:50]}")
+
+        print(f"\n  ✓ Classified all {total_products} products!")
+
+        # STEP 3: Verification
+        print(f"\nStep 3: Verification...")
+
+        # Check for missing products (shouldn't have any with one-by-one approach)
+        missing = []
+        for i in range(1, total_products + 1):
+            if i not in product_to_collection:
+                missing.append(i)
+
+        if missing:
+            print(f"  ⚠️ Found {len(missing)} unclassified products (unexpected!)")
+            # Assign to most populated collection
+            fallback = max(collections_dict.items(), key=lambda x: len(x[1]))[0]
+            for product_idx in missing:
+                product_to_collection[product_idx] = fallback
+                collections_dict[fallback].append(product_idx)
+            print(f"  ✓ Assigned {len(missing)} products to '{fallback}'")
         
         # Remove empty collections
         all_collections = {name: ids for name, ids in collections_dict.items() if ids}
