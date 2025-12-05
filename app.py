@@ -95,7 +95,7 @@ def fetch_products():
         
         while page_count < max_pages:
             print(f"Fetching page {page_count + 1}...")
-            response = requests.get(url, headers=headers, params=params, timeout=30)
+            response = requests.get(url, headers=headers, params=params, timeout=60)  # Increased timeout
             
             if response.status_code != 200:
                 return jsonify({
@@ -309,7 +309,7 @@ REMEMBER: This is construction/safety equipment - use technical specifications!"
                     ],
                     temperature=0.3,
                     max_tokens=4000,  # Large limit for many collections
-                    request_timeout=90
+                    request_timeout=180  # Increased to 3 minutes for large responses
                 )
 
                 result = response.choices[0].message.content.strip()
@@ -429,7 +429,7 @@ Be PRECISE and choose the most granular match."""
                     ],
                     temperature=0.1,
                     max_tokens=100,
-                    request_timeout=20
+                    request_timeout=60  # Increased to 60 seconds for reliability
                 )
 
                 collection_name = resp.choices[0].message.content.strip().strip('"\'')
@@ -604,7 +604,7 @@ def update_shopify_stream():
             # Test if we can access collections endpoint
             test_url = f"https://{shop_url}/admin/api/{api_version}/custom_collections.json?limit=1"
             try:
-                test_response = requests.get(test_url, headers=headers, timeout=10)
+                test_response = requests.get(test_url, headers=headers, timeout=30)  # Increased timeout
                 if test_response.status_code == 403:
                     yield f"data: {json.dumps({'type': 'error', 'message': 'Access token lacks permissions to read collections. Please verify your Shopify app has read_products and write_products scopes.'})}\n\n"
                     return
