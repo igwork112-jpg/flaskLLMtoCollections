@@ -519,11 +519,11 @@
 
         async function updateShopify() {
             setLoading('update', true);
-            
+
             // Clear previous results
             const logArea = document.getElementById('log');
             logArea.innerHTML = '';
-            
+
             // Show progress bar
             const progressContainer = document.getElementById('progress-container');
             const progressBar = document.getElementById('progress-bar');
@@ -531,114 +531,192 @@
             progressBar.style.width = '0%';
             progressBar.textContent = '0%';
 
-            let currentCollectionDiv = null;
-            let processedCount = 0;
-            let totalCount = 0;
-            const collectionDivs = {};
-
             try {
-                const eventSource = new EventSource('/api/update-shopify-stream');
-                
-                eventSource.onmessage = function(event) {
-                    const data = JSON.parse(event.data);
-                    
-                    if (data.type === 'start') {
-                        totalCount = data.total;
-                        log(`🚀 Starting update: ${data.collections} collections, ${data.total} products\n`, 'info');
-                    }
-                    
-                    else if (data.type === 'collection_start') {
-                        log(`\n📁 Processing collection: ${data.name}`, 'info');
-                    }
-                    
-                    else if (data.type === 'collection_created') {
-                        // Create collection group box
-                        const collectionDiv = document.createElement('div');
-                        collectionDiv.className = 'collection-group';
-                        collectionDiv.style.marginBottom = '20px';
-                        
-                        const title = document.createElement('div');
-                        title.className = 'collection-title';
-                        title.style.fontSize = '1.2rem';
-                        title.style.marginBottom = '10px';
-                        title.textContent = `📁 Collection: ${data.name}`;
-                        collectionDiv.appendChild(title);
-                        
-                        logArea.appendChild(collectionDiv);
-                        collectionDivs[data.name] = collectionDiv;
-                        currentCollectionDiv = collectionDiv;
-                        
-                        log(`   ✓ Collection ready (ID: ${data.id})`, 'success');
-                    }
-                    
-                    else if (data.type === 'product_added') {
-                        processedCount++;
-                        const progress = Math.round((processedCount / totalCount) * 100);
-                        progressBar.style.width = progress + '%';
-                        progressBar.textContent = progress + '%';
-                        
-                        const collectionDiv = collectionDivs[data.collection];
-                        if (collectionDiv) {
-                            const productDiv = document.createElement('div');
-                            productDiv.className = 'product-item';
-                            productDiv.style.padding = '8px 0';
-                            
-                            if (data.status === 'success') {
-                                productDiv.style.color = '#28a745';
-                                productDiv.innerHTML = `<strong>✓</strong> Added: ${data.product}`;
-                            } else {
-                                productDiv.style.color = '#dc3545';
-                                productDiv.innerHTML = `<strong>✗</strong> Failed: ${data.product}`;
-                            }
-                            
-                            collectionDiv.appendChild(productDiv);
-                        }
-                        
-                        logArea.scrollTop = logArea.scrollHeight;
-                    }
-                    
-                    else if (data.type === 'collection_error') {
-                        log(`   ✗ Failed to create collection: ${data.name}`, 'error');
-                    }
-                    
-                    else if (data.type === 'complete') {
-                        progressBar.style.width = '100%';
-                        progressBar.textContent = '✓ Complete';
-                        progressBar.style.background = 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)';
-                        
-                        log(`\n✅ SUCCESS: ${data.success_count} out of ${data.total} products added`, 'success');
-                        log(`🎉 All collections created and products organized!`, 'success');
-                        
-                        setTimeout(() => {
-                            progressContainer.classList.add('hidden');
-                        }, 5000);
-                        
-                        eventSource.close();
-                        setLoading('update', false);
-                    }
-                    
-                    else if (data.type === 'error') {
-                        log(`✗ Error: ${data.message}`, 'error');
-                        progressContainer.classList.add('hidden');
-                        eventSource.close();
-                        setLoading('update', false);
-                    }
-                };
-                
-                eventSource.onerror = function(error) {
-                    console.error('EventSource error:', error);
-                    log(`✗ Connection error. Please try again.`, 'error');
+                // Start background update
+                log('🚀 Starting Shopify update in background...', 'info');
+                log('💡 You can close this browser and come back later!', 'info');
+
+                const startResponse = await fetch('/api/update-shopify-start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const startData = await startResponse.json();
+                if (!startData.success) {
+                    log(`✗ Error: ${startData.error}`, 'error');
                     progressContainer.classList.add('hidden');
-                    eventSource.close();
                     setLoading('update', false);
-                };
-                
+                    return;
+                }
+
+                const taskId = startData.task_id;
+                log(`✓ Task started (ID: ${taskId.substring(0, 8)}...)`, 'success');
+
+                // Poll for progress
+                const pollInterval = setInterval(async () => {
+                    try {
+                        const statusResponse = await fetch(`/api/update-shopify-status?task_id=${taskId}`);
+                        const statusData = await statusResponse.json();
+
+                        if (!statusData.success) {
+                            clearInterval(pollInterval);
+                            log(`✗ Error: ${statusData.error}`, 'error');
+                            progressContainer.classList.add('hidden');
+                            setLoading('update', false);
+                            return;
+                        }
+
+                        const { status, progress, message, data: resultData } = statusData;
+
+                        // Update progress bar
+                        progressBar.style.width = `${progress}%`;
+                        progressBar.textContent = `${progress}% - ${message}`;
+
+                        // Handle completion
+                        if (status === 'complete') {
+                            clearInterval(pollInterval);
+
+                            progressBar.style.width = '100%';
+                            progressBar.textContent = '✓ Complete';
+                            progressBar.style.background = 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)';
+
+                            log(`\n✅ SUCCESS: ${resultData.success_count} out of ${resultData.total} products added`, 'success');
+                            log(`🎉 ${resultData.collections} collections created!`, 'success');
+
+                            setTimeout(() => {
+                                progressContainer.classList.add('hidden');
+                            }, 5000);
+
+                            setLoading('update', false);
+                        }
+
+                        // Handle error
+                        if (status === 'error') {
+                            clearInterval(pollInterval);
+                            log(`✗ Update error: ${message}`, 'error');
+                            progressContainer.classList.add('hidden');
+                            setLoading('update', false);
+                        }
+
+                    } catch (error) {
+                        clearInterval(pollInterval);
+                        log(`✗ Error checking status: ${error.message}`, 'error');
+                        progressContainer.classList.add('hidden');
+                        setLoading('update', false);
+                    }
+                }, 2000); // Poll every 2 seconds
+
             } catch (error) {
-                progressContainer.classList.add('hidden');
                 log(`✗ Error: ${error.message}`, 'error');
+                progressContainer.classList.add('hidden');
                 setLoading('update', false);
             }
         }
+
+        // Check for ongoing classification task on page load
+        async function checkOngoingTask() {
+            try {
+                const response = await fetch('/api/classification-status');
+                const data = await response.json();
+
+                if (data.success && data.status === 'running') {
+                    log('🔄 Resuming ongoing classification...', 'info');
+                    log(`💡 Progress: ${data.progress}% - ${data.message}`, 'info');
+
+                    // Create progress display
+                    let progressDiv = document.createElement('div');
+                    progressDiv.style.cssText = 'padding: 10px; margin: 10px 0; background: #e3f2fd; border-radius: 5px; font-family: monospace;';
+                    progressDiv.innerHTML = '<strong>⏳ Progress:</strong> <span id="progress-text">Resuming...</span><br><span id="progress-bar" style="display: inline-block; width: ' + data.progress + '%; height: 20px; background: #4CAF50; border-radius: 3px; margin-top: 5px;"></span>';
+                    document.getElementById('log').appendChild(progressDiv);
+
+                    setLoading('classify', true);
+
+                    // Start polling
+                    const taskId = data.task_id;
+                    const pollInterval = setInterval(async () => {
+                        try {
+                            const statusResponse = await fetch(`/api/classification-status?task_id=${taskId}`);
+                            const statusData = await statusResponse.json();
+
+                            if (!statusData.success) {
+                                clearInterval(pollInterval);
+                                progressDiv.remove();
+                                log(`✗ Error: ${statusData.error}`, 'error');
+                                setLoading('classify', false);
+                                return;
+                            }
+
+                            const { status, progress, message, data: resultData } = statusData;
+
+                            // Update progress bar
+                            const progressBar = document.getElementById('progress-bar');
+                            const progressText = document.getElementById('progress-text');
+
+                            if (progressBar && progressText) {
+                                progressBar.style.width = `${progress}%`;
+                                progressText.textContent = `${progress}% - ${message}`;
+                            }
+
+                            // Handle completion
+                            if (status === 'complete') {
+                                clearInterval(pollInterval);
+                                progressDiv.remove();
+
+                                log(`\n✓ Classification complete!`, 'success');
+                                log(`✓ Classified into ${resultData.total_collections} collections:\n`, 'success');
+
+                                const logArea = document.getElementById('log');
+
+                                Object.entries(resultData.collections).forEach(([collectionName, products]) => {
+                                    const collectionDiv = document.createElement('div');
+                                    collectionDiv.className = 'collection-group';
+
+                                    const title = document.createElement('div');
+                                    title.className = 'collection-title';
+                                    title.textContent = `📁 ${collectionName} (${products.length} products)`;
+                                    collectionDiv.appendChild(title);
+
+                                    products.forEach(p => {
+                                        const productDiv = document.createElement('div');
+                                        productDiv.className = 'product-item';
+                                        productDiv.textContent = `${p.index}. ${p.title}`;
+                                        collectionDiv.appendChild(productDiv);
+                                    });
+
+                                    logArea.appendChild(collectionDiv);
+                                });
+
+                                document.getElementById('collection-count').textContent = Object.keys(resultData.collections).length;
+                                document.getElementById('update-btn').disabled = false;
+
+                                log('\n✓ Ready to update Shopify. Click "Update Shopify"', 'success');
+                                setLoading('classify', false);
+                            }
+
+                            // Handle error
+                            if (status === 'error') {
+                                clearInterval(pollInterval);
+                                progressDiv.remove();
+                                log(`✗ Classification error: ${message}`, 'error');
+                                setLoading('classify', false);
+                            }
+
+                        } catch (error) {
+                            clearInterval(pollInterval);
+                            progressDiv.remove();
+                            log(`✗ Error checking status: ${error.message}`, 'error');
+                            setLoading('classify', false);
+                        }
+                    }, 2000);
+                }
+            } catch (error) {
+                // No ongoing task or error checking - ignore
+                console.log('No ongoing task');
+            }
+        }
+
+        // Check for ongoing task when page loads
+        window.addEventListener('DOMContentLoaded', checkOngoingTask);
     </script>
 </body>
 </html>

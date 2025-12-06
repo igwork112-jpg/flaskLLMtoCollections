@@ -263,6 +263,107 @@ Return ONLY the exact collection name (with " > " format). No explanation, just 
     except Exception as e:
         update_task_progress(task_id, 'error', 0, str(e))
 
+def run_shopify_update_background(task_id, products, collections, shop_url, access_token, session_id):
+    """Run Shopify update in background thread"""
+    try:
+        update_task_progress(task_id, 'running', 0, 'Starting Shopify update...')
+
+        api_version = '2024-10'
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json"
+        }
+
+        # Test permissions
+        test_url = f"https://{shop_url}/admin/api/{api_version}/custom_collections.json?limit=1"
+        try:
+            test_response = requests.get(test_url, headers=headers, timeout=30)
+            if test_response.status_code == 403:
+                update_task_progress(task_id, 'error', 0, 'Access token lacks permissions')
+                return
+            elif test_response.status_code != 200:
+                update_task_progress(task_id, 'error', 0, f'Cannot access Shopify API. Status: {test_response.status_code}')
+                return
+        except Exception as e:
+            update_task_progress(task_id, 'error', 0, f'Connection test failed: {str(e)}')
+            return
+
+        # Deduplicate collections
+        seen_products = set()
+        clean_collections = {}
+        duplicates_removed = 0
+
+        for collection_name, indices in collections.items():
+            unique_indices = []
+            for idx in indices:
+                if idx not in seen_products:
+                    unique_indices.append(idx)
+                    seen_products.add(idx)
+                else:
+                    duplicates_removed += 1
+
+            if unique_indices:
+                clean_collections[collection_name] = unique_indices
+
+        collections = clean_collections
+
+        if duplicates_removed > 0:
+            update_task_progress(task_id, 'running', 5, f'Removed {duplicates_removed} duplicate products')
+
+        # Extract and create parent categories
+        parent_categories = set()
+        for collection_name in collections.keys():
+            if " > " in collection_name:
+                parent = collection_name.split(" > ")[0]
+                parent_categories.add(parent)
+
+        update_task_progress(task_id, 'running', 10, f'Creating {len(parent_categories)} parent categories...')
+
+        parent_ids = {}
+        for parent_name in sorted(parent_categories):
+            parent_id = create_or_get_collection(parent_name, shop_url, headers)
+            if parent_id:
+                parent_ids[parent_name] = parent_id
+            time.sleep(0.5)
+
+        success_count = 0
+        total_products = len(seen_products)
+        total_collections = len(collections)
+        processed_collections = 0
+
+        update_task_progress(task_id, 'running', 15, f'Updating {total_collections} collections with {total_products} products')
+
+        # Process each collection
+        for collection_name, indices in collections.items():
+            processed_collections += 1
+            base_progress = 15 + int((processed_collections / total_collections) * 80)
+
+            update_task_progress(task_id, 'running', base_progress,
+                               f'Processing collection {processed_collections}/{total_collections}: {collection_name}')
+
+            # Create or get collection
+            collection_id = create_or_get_collection(collection_name, shop_url, headers)
+
+            if not collection_id:
+                continue
+
+            # Add products
+            for idx in indices:
+                if 1 <= idx <= len(products):
+                    product = products[idx - 1]
+                    if add_product_to_collection(product["id"], collection_id, collection_name, shop_url, headers):
+                        success_count += 1
+
+        # Complete
+        update_task_progress(task_id, 'complete', 100, 'Shopify update complete!', {
+            'success_count': success_count,
+            'total': total_products,
+            'collections': total_collections
+        })
+
+    except Exception as e:
+        update_task_progress(task_id, 'error', 0, str(e))
+
 print(f"✓ Background task manager initialized")
 
 @app.route('/')
@@ -1037,6 +1138,70 @@ Return ONLY the exact collection name (with " > " format). No explanation, just 
     response.headers['Cache-Control'] = 'no-cache'
     response.headers['X-Accel-Buffering'] = 'no'
     return response
+
+@app.route('/api/update-shopify-start', methods=['POST'])
+def update_shopify_start():
+    """Start Shopify update in background thread"""
+    try:
+        # Get data from session
+        products = get_data('products', [])
+        collections = get_data('classified_collections', {})
+        shop_url = get_data('shop_url', '')
+        access_token = get_data('access_token', '')
+
+        if not products or not collections:
+            return jsonify({"success": False, "error": "No classification data found"}), 400
+
+        if not shop_url or not access_token:
+            return jsonify({"success": False, "error": "Missing Shopify credentials"}), 400
+
+        # Create task
+        task_id = get_task_id()
+        session_id = get_session_id()
+
+        # Store task ID in session
+        store_data('current_update_task_id', task_id)
+
+        # Start background thread
+        thread = Thread(target=run_shopify_update_background,
+                       args=(task_id, products, collections, shop_url, access_token, session_id))
+        thread.daemon = True
+        thread.start()
+
+        return jsonify({
+            "success": True,
+            "task_id": task_id,
+            "message": "Shopify update started in background"
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+@app.route('/api/update-shopify-status', methods=['GET'])
+def update_shopify_status():
+    """Get Shopify update task status"""
+    try:
+        # Get task_id from query params or from session
+        task_id = request.args.get('task_id') or get_data('current_update_task_id')
+
+        if not task_id:
+            return jsonify({"success": False, "error": "No task ID provided"}), 400
+
+        task = get_task_status(task_id)
+
+        if not task:
+            return jsonify({"success": False, "error": "Task not found"}), 404
+
+        return jsonify({
+            "success": True,
+            "task_id": task_id,
+            "status": task['status'],
+            "progress": task['progress'],
+            "message": task['message'],
+            "data": task.get('data'),
+            "updated_at": task['updated_at'].isoformat()
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
 
 @app.route('/api/update-shopify-stream', methods=['GET'])
 def update_shopify_stream():
