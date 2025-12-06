@@ -117,10 +117,11 @@ def run_classification_background(task_id, products, user_collections, session_i
             # Generate collections with AI
             update_task_progress(task_id, 'running', 5, 'Generating collections with AI...')
 
-            sample_count = min(total_products, 1000)
+            # Reduce sample size to avoid token limits (16K for gpt-3.5-turbo-16k)
+            sample_count = min(total_products, 200)
             all_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_count)])
 
-            collection_prompt = f"""You are analyzing {sample_count} construction/safety/traffic equipment products. Create a HIGHLY DETAILED collection structure with MANY specific subcategories.
+            collection_prompt = f"""You are analyzing {sample_count} construction/safety/traffic equipment products (sample from {total_products} total). Create a HIGHLY DETAILED collection structure with MANY specific subcategories.
 
 CRITICAL REQUIREMENTS:
 1. Create 8-15 PARENT categories based on main product types
@@ -521,12 +522,12 @@ def classify_products():
             print(f"  Analyzing {total_products} products to generate DETAILED collection hierarchy...")
             print(f"  Creating 50-150+ specific collections based on product types, sizes, and features...")
 
-            # Use MORE products for better analysis (up to 1000)
-            sample_count = min(total_products, 1000)
+            # Reduce sample size to avoid token limits (16K for gpt-3.5-turbo-16k)
+            sample_count = min(total_products, 200)
             all_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_count)])
             print(f"  Analyzing {sample_count} products...")
 
-            collection_prompt = f"""You are analyzing {sample_count} construction/safety/traffic equipment products. Create a HIGHLY DETAILED collection structure with MANY specific subcategories.
+            collection_prompt = f"""You are analyzing {sample_count} construction/safety/traffic equipment products (sample from {total_products} total). Create a HIGHLY DETAILED collection structure with MANY specific subcategories.
 
 CRITICAL REQUIREMENTS:
 1. Create 8-15 PARENT categories based on main product types
@@ -998,10 +999,11 @@ def classify_products_stream():
                 # AI generation (same as before, but with progress updates)
                 yield f"data: {json.dumps({'type': 'info', 'message': 'Generating collections with AI...'})}\n\n"
 
-                sample_count = min(total_products, 1000)
+                # Reduce sample size to avoid token limits (16K for gpt-3.5-turbo-16k)
+                sample_count = min(total_products, 200)
                 all_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_count)])
 
-                collection_prompt = f"""You are analyzing {sample_count} construction/safety/traffic equipment products. Create a HIGHLY DETAILED collection structure with MANY specific subcategories.
+                collection_prompt = f"""You are analyzing {sample_count} construction/safety/traffic equipment products (sample from {total_products} total). Create a HIGHLY DETAILED collection structure with MANY specific subcategories.
 
 CRITICAL REQUIREMENTS:
 1. Create 8-15 PARENT categories based on main product types
