@@ -8,7 +8,7 @@ import uuid
 import re
 from datetime import timedelta, datetime
 from dotenv import load_dotenv
-from threading import Lock
+from threading import Lock, Thread
 
 # Load environment variables
 load_dotenv()
@@ -58,6 +58,212 @@ def get_data(key, default=None):
 
 print(f"✓ In-memory data store initialized (no cookie size limits)")
 print(f"✓ Session cleanup: automatic (24 hour expiry)")
+
+# Background task manager
+classification_tasks = {}
+tasks_lock = Lock()
+
+def get_task_id():
+    """Generate unique task ID"""
+    return str(uuid.uuid4())
+
+def update_task_progress(task_id, status, progress=0, message="", data=None):
+    """Update task progress"""
+    with tasks_lock:
+        if task_id not in classification_tasks:
+            classification_tasks[task_id] = {}
+        classification_tasks[task_id].update({
+            'status': status,  # 'running', 'complete', 'error'
+            'progress': progress,  # 0-100
+            'message': message,
+            'updated_at': datetime.now(),
+            'data': data
+        })
+
+def get_task_status(task_id):
+    """Get task status"""
+    with tasks_lock:
+        return classification_tasks.get(task_id, None)
+
+def run_classification_background(task_id, products, user_collections, session_id):
+    """Run classification in background thread"""
+    try:
+        update_task_progress(task_id, 'running', 0, 'Starting classification...')
+
+        if not OPENAI_API_KEY:
+            update_task_progress(task_id, 'error', 0, 'OpenAI API key not configured')
+            return
+
+        openai.api_key = OPENAI_API_KEY
+        total_products = len(products)
+
+        # Step 1: Handle collections
+        if user_collections and len(user_collections) > 0:
+            suggested_collections = user_collections
+            update_task_progress(task_id, 'running', 5, f'Using {len(user_collections)} custom collections')
+
+            parent_mapping = {}
+            for col in suggested_collections:
+                if " > " in col:
+                    parent = col.split(" > ")[0]
+                    parent_mapping[col] = parent
+
+            # Store parent mapping in session
+            with store_lock:
+                if session_id not in data_store:
+                    data_store[session_id] = {'created_at': datetime.now()}
+                data_store[session_id]['parent_mapping'] = parent_mapping
+        else:
+            # Generate collections with AI
+            update_task_progress(task_id, 'running', 5, 'Generating collections with AI...')
+
+            sample_count = min(total_products, 1000)
+            all_titles = "\n".join([f"{i+1}. {products[i]['title']}" for i in range(sample_count)])
+
+            collection_prompt = f"""You are analyzing {sample_count} construction/safety/traffic equipment products. Create a HIGHLY DETAILED collection structure with MANY specific subcategories.
+
+CRITICAL REQUIREMENTS:
+1. Create 8-15 PARENT categories based on main product types
+2. For EACH parent, create 10-30 SPECIFIC subcategories
+3. Target: 80-200+ total subcategories (the more specific, the better!)
+
+Products to analyze:
+{all_titles}
+
+Return a JSON object with parent categories as keys, and arrays of specific subcategories as values."""
+
+            try:
+                response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo-16k",
+                    messages=[
+                        {"role": "system", "content": "You are an expert categorization specialist. Return ONLY valid JSON."},
+                        {"role": "user", "content": collection_prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=4000,
+                    request_timeout=180
+                )
+
+                result = response.choices[0].message.content.strip()
+                if "```json" in result:
+                    result = result.split("```json")[1].split("```")[0].strip()
+                elif "```" in result:
+                    result = result.split("```")[1].split("```")[0].strip()
+
+                hierarchy = json.loads(result)
+                suggested_collections = []
+                parent_mapping = {}
+
+                for parent, subcategories in hierarchy.items():
+                    for subcat in subcategories:
+                        full_name = f"{parent} > {subcat}"
+                        suggested_collections.append(full_name)
+                        parent_mapping[full_name] = parent
+
+                # Store in session
+                with store_lock:
+                    if session_id not in data_store:
+                        data_store[session_id] = {'created_at': datetime.now()}
+                    data_store[session_id]['parent_mapping'] = parent_mapping
+
+                update_task_progress(task_id, 'running', 10, f'Generated {len(suggested_collections)} collections')
+
+            except Exception as e:
+                update_task_progress(task_id, 'error', 0, f'AI generation failed: {str(e)}')
+                return
+
+        # Step 2: Classify products in batches
+        BATCH_SIZE = 500
+        total_batches = (total_products + BATCH_SIZE - 1) // BATCH_SIZE
+
+        collections_dict = {name: [] for name in suggested_collections}
+        product_to_collection = {}
+        collections_list = json.dumps(list(collections_dict.keys()), indent=2)
+
+        update_task_progress(task_id, 'running', 10, f'Processing {total_products} products in {total_batches} batches')
+
+        for batch_num in range(total_batches):
+            batch_start = batch_num * BATCH_SIZE + 1
+            batch_end = min((batch_num + 1) * BATCH_SIZE, total_products)
+
+            update_task_progress(task_id, 'running', 10 + int((batch_num / total_batches) * 85),
+                               f'Batch {batch_num + 1}/{total_batches} (Products {batch_start}-{batch_end})')
+
+            for idx in range(batch_start, batch_end + 1):
+                product_title = products[idx - 1]['title']
+
+                # Update progress every 10 products
+                if idx % 10 == 0 or idx == batch_start:
+                    percentage = 10 + int((idx / total_products) * 85)
+                    update_task_progress(task_id, 'running', percentage,
+                                       f'Classifying product {idx}/{total_products}: {product_title[:50]}...')
+
+                prompt = f"""Classify this product into the MOST SPECIFIC matching collection.
+
+Product: {product_title}
+
+Available collections (format "Parent > Subcategory"):
+{collections_list}
+
+Return ONLY the exact collection name (with " > " format). No explanation, just the collection name."""
+
+                try:
+                    resp = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",
+                        messages=[
+                            {"role": "system", "content": "You are a product classification expert. Return ONLY the collection name from the provided list, nothing else."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.1,
+                        max_tokens=100,
+                        request_timeout=60
+                    )
+
+                    collection_name = resp.choices[0].message.content.strip().strip('"\'')
+
+                    if collection_name in collections_dict:
+                        product_to_collection[idx] = collection_name
+                        collections_dict[collection_name].append(idx)
+                    else:
+                        fallback = max(collections_dict.items(), key=lambda x: len(x[1]) if x[1] else 0)[0]
+                        product_to_collection[idx] = fallback
+                        collections_dict[fallback].append(idx)
+
+                    time.sleep(0.05)
+
+                except Exception as e:
+                    fallback = max(collections_dict.items(), key=lambda x: len(x[1]) if x[1] else 0)[0]
+                    product_to_collection[idx] = fallback
+                    collections_dict[fallback].append(idx)
+
+        # Remove empty collections
+        all_collections = {name: ids for name, ids in collections_dict.items() if ids}
+
+        # Format for display
+        formatted_collections = {}
+        for collection_name, indices in all_collections.items():
+            formatted_collections[collection_name] = [
+                {"index": idx, "title": products[idx-1]["title"]}
+                for idx in sorted(indices) if 1 <= idx <= len(products)
+            ]
+
+        # Store results in session
+        with store_lock:
+            if session_id not in data_store:
+                data_store[session_id] = {'created_at': datetime.now()}
+            data_store[session_id]['classified_collections'] = all_collections
+
+        # Complete task
+        update_task_progress(task_id, 'complete', 100, 'Classification complete!', {
+            'collections': formatted_collections,
+            'total_collections': len(all_collections),
+            'total_products': len(products)
+        })
+
+    except Exception as e:
+        update_task_progress(task_id, 'error', 0, str(e))
+
+print(f"✓ Background task manager initialized")
 
 @app.route('/')
 def index():
@@ -587,17 +793,68 @@ Be PRECISE and choose the most granular match."""
 
 @app.route('/api/classify-start', methods=['POST'])
 def classify_start():
-    """Initialize classification by storing user collections"""
+    """Start classification in background thread"""
     try:
         data = request.json or {}
         user_collections = data.get('user_collections', None)
 
-        if user_collections and len(user_collections) > 0:
-            store_data('user_collections_input', user_collections)
-        else:
-            store_data('user_collections_input', None)
+        # Get products from session
+        products = get_data('products', [])
 
-        return jsonify({"success": True, "message": "Ready to classify"})
+        if not products:
+            return jsonify({"success": False, "error": "No products found. Fetch products first."}), 400
+
+        # Parse user collections
+        if user_collections and len(user_collections) > 0:
+            user_collections_list = user_collections
+        else:
+            user_collections_list = None
+
+        # Create task
+        task_id = get_task_id()
+        session_id = get_session_id()
+
+        # Store task ID in session
+        store_data('current_task_id', task_id)
+
+        # Start background thread
+        thread = Thread(target=run_classification_background,
+                       args=(task_id, products, user_collections_list, session_id))
+        thread.daemon = True
+        thread.start()
+
+        return jsonify({
+            "success": True,
+            "task_id": task_id,
+            "message": "Classification started in background"
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+@app.route('/api/classification-status', methods=['GET'])
+def classification_status():
+    """Get classification task status"""
+    try:
+        # Get task_id from query params or from session
+        task_id = request.args.get('task_id') or get_data('current_task_id')
+
+        if not task_id:
+            return jsonify({"success": False, "error": "No task ID provided"}), 400
+
+        task = get_task_status(task_id)
+
+        if not task:
+            return jsonify({"success": False, "error": "Task not found"}), 404
+
+        return jsonify({
+            "success": True,
+            "task_id": task_id,
+            "status": task['status'],
+            "progress": task['progress'],
+            "message": task['message'],
+            "data": task.get('data'),
+            "updated_at": task['updated_at'].isoformat()
+        })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 400
 
@@ -605,15 +862,19 @@ def classify_start():
 def classify_products_stream():
     def generate():
         try:
+            print("[STREAM] Starting classification stream...")
             products = get_data('products', [])
             user_collections = get_data('user_collections_input', None)
+            print(f"[STREAM] Products: {len(products)}, User collections: {len(user_collections) if user_collections else 0}")
 
             if not products:
+                print("[STREAM] ERROR: No products found")
                 yield f"data: {json.dumps({'type': 'error', 'message': 'No products found. Fetch products first.'})}\n\n"
                 return
 
             if not OPENAI_API_KEY:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'OpenAI API key not configured'})}\n\n"
+                print("[STREAM] ERROR: OpenAI API key not configured")
+                yield f"data: {json.dumps({'type': 'error', 'message': 'OpenAI API key not configured. Please add OPENAI_API_KEY to .env file'})}\n\n"
                 return
 
             openai.api_key = OPENAI_API_KEY

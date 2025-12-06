@@ -402,8 +402,11 @@
             }
 
             try {
-                // Step 1: Initialize classification
-                const initResponse = await fetch('/api/classify-start', {
+                // Step 1: Start classification in background
+                log('🚀 Starting classification in background...', 'info');
+                log('💡 You can close this browser and come back later!', 'info');
+
+                const startResponse = await fetch('/api/classify-start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -411,48 +414,50 @@
                     })
                 });
 
-                const initData = await initResponse.json();
-                if (!initData.success) {
-                    log(`✗ Error: ${initData.error}`, 'error');
+                const startData = await startResponse.json();
+                if (!startData.success) {
+                    log(`✗ Error: ${startData.error}`, 'error');
                     setLoading('classify', false);
                     return;
                 }
 
-                // Step 2: Connect to streaming endpoint
-                const eventSource = new EventSource('/api/classify-stream');
+                const taskId = startData.task_id;
+                log(`✓ Task started (ID: ${taskId.substring(0, 8)}...)`, 'success');
 
+                // Step 2: Create progress display
                 let progressDiv = document.createElement('div');
                 progressDiv.style.cssText = 'padding: 10px; margin: 10px 0; background: #e3f2fd; border-radius: 5px; font-family: monospace;';
-                progressDiv.innerHTML = '<strong>⏳ Progress:</strong> <span id="progress-text">Starting...</span>';
+                progressDiv.innerHTML = '<strong>⏳ Progress:</strong> <span id="progress-text">Starting...</span><br><span id="progress-bar" style="display: inline-block; width: 0%; height: 20px; background: #4CAF50; border-radius: 3px; margin-top: 5px;"></span>';
                 document.getElementById('log').appendChild(progressDiv);
 
-                eventSource.onmessage = function(event) {
-                    const data = JSON.parse(event.data);
+                // Step 3: Poll for progress
+                const pollInterval = setInterval(async () => {
+                    try {
+                        const statusResponse = await fetch(`/api/classification-status?task_id=${taskId}`);
+                        const statusData = await statusResponse.json();
 
-                    switch(data.type) {
-                        case 'start':
-                            document.getElementById('progress-text').textContent = `Starting classification of ${data.total} products...`;
-                            break;
+                        if (!statusData.success) {
+                            clearInterval(pollInterval);
+                            progressDiv.remove();
+                            log(`✗ Error: ${statusData.error}`, 'error');
+                            setLoading('classify', false);
+                            return;
+                        }
 
-                        case 'info':
-                            log(`ℹ️ ${data.message}`, 'info');
-                            break;
+                        const { status, progress, message, data } = statusData;
 
-                        case 'batch_start':
-                            log(`\n📦 Starting Batch ${data.batch}/${data.total_batches} (Products ${data.start}-${data.end})`, 'info');
-                            break;
+                        // Update progress bar
+                        const progressBar = document.getElementById('progress-bar');
+                        const progressText = document.getElementById('progress-text');
 
-                        case 'batch_complete':
-                            log(`✓ Batch ${data.batch}/${data.total_batches} complete (${data.products_classified} products classified)`, 'success');
-                            break;
+                        if (progressBar && progressText) {
+                            progressBar.style.width = `${progress}%`;
+                            progressText.textContent = `${progress}% - ${message}`;
+                        }
 
-                        case 'progress':
-                            const progressText = `${data.percentage}% (${data.current}/${data.total}) | Batch ${data.batch}: ${data.batch_progress}% - ${data.product.substring(0, 50)}...`;
-                            document.getElementById('progress-text').textContent = progressText;
-                            break;
-
-                        case 'complete':
-                            eventSource.close();
+                        // Handle completion
+                        if (status === 'complete') {
+                            clearInterval(pollInterval);
                             progressDiv.remove();
 
                             log(`\n✓ Classification complete!`, 'success');
@@ -484,25 +489,23 @@
 
                             log('\n✓ Ready to update Shopify. Click "Update Shopify"', 'success');
                             setLoading('classify', false);
-                            break;
+                        }
 
-                        case 'error':
-                            eventSource.close();
+                        // Handle error
+                        if (status === 'error') {
+                            clearInterval(pollInterval);
                             progressDiv.remove();
-                            log(`✗ Error: ${data.message}`, 'error');
+                            log(`✗ Classification error: ${message}`, 'error');
                             setLoading('classify', false);
-                            break;
-                    }
-                };
+                        }
 
-                eventSource.onerror = function(error) {
-                    eventSource.close();
-                    if (progressDiv.parentNode) {
+                    } catch (error) {
+                        clearInterval(pollInterval);
                         progressDiv.remove();
+                        log(`✗ Error checking status: ${error.message}`, 'error');
+                        setLoading('classify', false);
                     }
-                    log('✗ Connection error or stream closed', 'error');
-                    setLoading('classify', false);
-                };
+                }, 2000); // Poll every 2 seconds
 
             } catch (error) {
                 log(`✗ Error: ${error.message}`, 'error');
