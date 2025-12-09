@@ -265,9 +265,9 @@ Return ONLY the exact collection name (with " > " format). No explanation, just 
         update_task_progress(task_id, 'error', 0, str(e))
 
 def run_shopify_update_background(task_id, products, collections, shop_url, access_token, session_id):
-    """Run Shopify update in background thread"""
+    """Run Shopify update with Smart Collections - faster and automatic!"""
     try:
-        update_task_progress(task_id, 'running', 0, 'Starting Shopify update...')
+        update_task_progress(task_id, 'running', 0, 'Starting Smart Collections update...')
 
         api_version = '2024-10'
         headers = {
@@ -275,12 +275,12 @@ def run_shopify_update_background(task_id, products, collections, shop_url, acce
             "Content-Type": "application/json"
         }
 
-        # Test permissions
-        test_url = f"https://{shop_url}/admin/api/{api_version}/custom_collections.json?limit=1"
+        # Test permissions for Smart Collections
+        test_url = f"https://{shop_url}/admin/api/{api_version}/smart_collections.json?limit=1"
         try:
             test_response = requests.get(test_url, headers=headers, timeout=30)
             if test_response.status_code == 403:
-                update_task_progress(task_id, 'error', 0, 'Access token lacks permissions')
+                update_task_progress(task_id, 'error', 0, 'Access token lacks permissions for Smart Collections')
                 return
             elif test_response.status_code != 200:
                 update_task_progress(task_id, 'error', 0, f'Cannot access Shopify API. Status: {test_response.status_code}')
@@ -289,7 +289,7 @@ def run_shopify_update_background(task_id, products, collections, shop_url, acce
             update_task_progress(task_id, 'error', 0, f'Connection test failed: {str(e)}')
             return
 
-        # Deduplicate collections
+        # Deduplicate - each product goes to ONLY ONE collection
         seen_products = set()
         clean_collections = {}
         duplicates_removed = 0
@@ -309,57 +309,58 @@ def run_shopify_update_background(task_id, products, collections, shop_url, acce
         collections = clean_collections
 
         if duplicates_removed > 0:
-            update_task_progress(task_id, 'running', 5, f'Removed {duplicates_removed} duplicate products')
+            update_task_progress(task_id, 'running', 5, f'Removed {duplicates_removed} duplicate products (one product = one collection)')
 
-        # Extract and create parent categories
-        parent_categories = set()
-        for collection_name in collections.keys():
-            if " > " in collection_name:
-                parent = collection_name.split(" > ")[0]
-                parent_categories.add(parent)
-
-        update_task_progress(task_id, 'running', 10, f'Creating {len(parent_categories)} parent categories...')
-
-        parent_ids = {}
-        for parent_name in sorted(parent_categories):
-            parent_id = create_or_get_collection(parent_name, shop_url, headers)
-            if parent_id:
-                parent_ids[parent_name] = parent_id
-            time.sleep(0.5)
-
-        success_count = 0
         total_products = len(seen_products)
         total_collections = len(collections)
+
+        update_task_progress(task_id, 'running', 10, f'Step 1/2: Creating {total_collections} Smart Collections...')
+
+        # STEP 1: Create Smart Collections (fast - no product assignment needed!)
         processed_collections = 0
-
-        update_task_progress(task_id, 'running', 15, f'Updating {total_collections} collections with {total_products} products')
-
-        # Process each collection
-        for collection_name, indices in collections.items():
+        for collection_name in collections.keys():
             processed_collections += 1
-            base_progress = 15 + int((processed_collections / total_collections) * 80)
+            progress = 10 + int((processed_collections / total_collections) * 30)
 
-            update_task_progress(task_id, 'running', base_progress,
-                               f'Processing collection {processed_collections}/{total_collections}: {collection_name}')
+            update_task_progress(task_id, 'running', progress,
+                               f'Creating Smart Collection {processed_collections}/{total_collections}: {collection_name}')
 
-            # Create or get collection
-            collection_id = create_or_get_collection(collection_name, shop_url, headers)
+            # Create Smart Collection with rule: product_type = collection_name
+            collection_id = create_or_get_smart_collection(collection_name, shop_url, headers)
 
             if not collection_id:
-                continue
+                update_task_progress(task_id, 'running', progress,
+                                   f'⚠️ Failed to create: {collection_name}')
 
-            # Add products
+        update_task_progress(task_id, 'running', 40, f'Step 2/2: Updating {total_products} products with metadata...')
+
+        # STEP 2: Update product metadata (product_type + tags)
+        # Smart Collections will auto-populate based on product_type!
+        success_count = 0
+        processed_products = 0
+
+        for collection_name, indices in collections.items():
             for idx in indices:
                 if 1 <= idx <= len(products):
+                    processed_products += 1
                     product = products[idx - 1]
-                    if add_product_to_collection(product["id"], collection_id, collection_name, shop_url, headers):
+
+                    # Progress update every 10 products
+                    if processed_products % 10 == 0:
+                        progress = 40 + int((processed_products / total_products) * 55)
+                        update_task_progress(task_id, 'running', progress,
+                                           f'Updating product {processed_products}/{total_products}')
+
+                    # Update product metadata (product_type = collection_name)
+                    if update_product_metadata(product["id"], collection_name, product["title"], shop_url, headers):
                         success_count += 1
 
         # Complete
-        update_task_progress(task_id, 'complete', 100, 'Shopify update complete!', {
+        update_task_progress(task_id, 'complete', 100, 'Smart Collections created! Products will auto-populate.', {
             'success_count': success_count,
             'total': total_products,
-            'collections': total_collections
+            'collections': total_collections,
+            'message': 'Smart Collections automatically populate based on product_type. Check your Shopify store!'
         })
 
     except Exception as e:
@@ -1213,20 +1214,20 @@ def update_shopify_stream():
             collections = get_data('classified_collections', {})
             shop_url = get_data('shop_url', '')
             access_token = get_data('access_token', '')
-            
+
             # Verify token permissions first
             api_version = '2024-10'
             headers = {
                 "X-Shopify-Access-Token": access_token,
                 "Content-Type": "application/json"
             }
-            
-            # Test if we can access collections endpoint
-            test_url = f"https://{shop_url}/admin/api/{api_version}/custom_collections.json?limit=1"
+
+            # Test Smart Collections endpoint
+            test_url = f"https://{shop_url}/admin/api/{api_version}/smart_collections.json?limit=1"
             try:
-                test_response = requests.get(test_url, headers=headers, timeout=30)  # Increased timeout
+                test_response = requests.get(test_url, headers=headers, timeout=30)
                 if test_response.status_code == 403:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'Access token lacks permissions to read collections. Please verify your Shopify app has read_products and write_products scopes.'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Access token lacks permissions for Smart Collections. Please verify read_products and write_products scopes.'})}\n\n"
                     return
                 elif test_response.status_code != 200:
                     yield f"data: {json.dumps({'type': 'error', 'message': f'Cannot access Shopify API. Status: {test_response.status_code}'})}\n\n"
@@ -1234,24 +1235,24 @@ def update_shopify_stream():
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'error', 'message': f'Connection test failed: {str(e)}'})}\n\n"
                 return
-            
+
             # Log what we retrieved
             retrieved_total = sum(len(ids) for ids in collections.values())
-            print(f"\n[SHOPIFY UPDATE] Retrieved {len(collections)} collections with {retrieved_total} products")
-            
+            print(f"\n[SMART COLLECTIONS UPDATE] Retrieved {len(collections)} collections with {retrieved_total} products")
+
             if not collections:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'No classification data'})}\n\n"
                 return
-            
+
             if not shop_url or not access_token:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Missing credentials'})}\n\n"
                 return
-            
-            # CRITICAL: Deduplicate collections before processing
+
+            # Deduplicate - each product in ONLY ONE collection
             seen_products = set()
             clean_collections = {}
             duplicates_removed = 0
-            
+
             for collection_name, indices in collections.items():
                 unique_indices = []
                 for idx in indices:
@@ -1260,101 +1261,91 @@ def update_shopify_stream():
                         seen_products.add(idx)
                     else:
                         duplicates_removed += 1
-                
+
                 if unique_indices:
                     clean_collections[collection_name] = unique_indices
-            
+
             collections = clean_collections
-            
+
             if duplicates_removed > 0:
-                yield f"data: {json.dumps({'type': 'info', 'message': f'Removed {duplicates_removed} duplicate products'})}\n\n"
+                yield f"data: {json.dumps({'type': 'info', 'message': f'Removed {duplicates_removed} duplicates (one product = one collection)'})}\n\n"
 
-            # Extract parent categories and create them first
-            parent_categories = set()
+            total_products = len(seen_products)
+            total_collections = len(collections)
+
+            yield f"data: {json.dumps({'type': 'start', 'total': total_products, 'collections': total_collections})}\n\n"
+            yield f"data: {json.dumps({'type': 'info', 'message': f'Step 1/2: Creating {total_collections} Smart Collections...'})}\n\n"
+
+            # STEP 1: Create Smart Collections (fast!)
+            collections_created = 0
             for collection_name in collections.keys():
-                if " > " in collection_name:
-                    parent = collection_name.split(" > ")[0]
-                    parent_categories.add(parent)
+                collections_created += 1
 
-            yield f"data: {json.dumps({'type': 'info', 'message': f'Creating {len(parent_categories)} parent categories...'})}\n\n"
+                yield f"data: {json.dumps({'type': 'collection_start', 'name': collection_name, 'progress': f'{collections_created}/{total_collections}'})}\n\n"
 
-            # Create parent collections first (for organizational purposes)
-            parent_ids = {}
-            for parent_name in sorted(parent_categories):
-                parent_id = create_or_get_collection(parent_name, shop_url, headers)
-                if parent_id:
-                    parent_ids[parent_name] = parent_id
-                    yield f"data: {json.dumps({'type': 'parent_created', 'name': parent_name, 'id': parent_id})}\n\n"
-                time.sleep(0.5)  # Rate limiting
+                # Create Smart Collection with rule
+                collection_id = create_or_get_smart_collection(collection_name, shop_url, headers)
 
+                if collection_id:
+                    yield f"data: {json.dumps({'type': 'collection_created', 'name': collection_name, 'id': collection_id})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'collection_error', 'name': collection_name, 'message': 'Failed to create'})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'info', 'message': f'Step 2/2: Updating {total_products} products...'})}\n\n"
+
+            # STEP 2: Update product metadata
             success_count = 0
-            total_products = len(seen_products)  # Use unique count
-
-            yield f"data: {json.dumps({'type': 'start', 'total': total_products, 'collections': len(collections), 'parents': len(parent_categories)})}\n\n"
+            processed_count = 0
 
             for collection_name, indices in collections.items():
-                # Notify collection processing
-                yield f"data: {json.dumps({'type': 'collection_start', 'name': collection_name, 'count': len(indices)})}\n\n"
-                
-                # Create or get collection
-                collection_id = create_or_get_collection(collection_name, shop_url, headers)
-                
-                if not collection_id:
-                    error_msg = f"Failed to create collection '{collection_name}'. Check console for details."
-                    yield f"data: {json.dumps({'type': 'collection_error', 'name': collection_name, 'message': error_msg})}\n\n"
-                    continue
-                
-                yield f"data: {json.dumps({'type': 'collection_created', 'name': collection_name, 'id': collection_id})}\n\n"
-                
-                # Add products
                 for idx in indices:
                     if 1 <= idx <= len(products):
+                        processed_count += 1
                         product = products[idx - 1]
 
-                        if add_product_to_collection(product["id"], collection_id, collection_name, shop_url, headers):
+                        # Stream updates every product
+                        if update_product_metadata(product["id"], collection_name, product["title"], shop_url, headers):
                             success_count += 1
-                            result = json.dumps({'type': 'product_added', 'collection': collection_name, 'product': product['title'], 'status': 'success'})
-                            yield f"data: {result}\n\n"
+                            yield f"data: {json.dumps({'type': 'product_updated', 'collection': collection_name, 'product': product['title'], 'progress': f'{processed_count}/{total_products}'})}\n\n"
                         else:
-                            result = json.dumps({'type': 'product_added', 'collection': collection_name, 'product': product['title'], 'status': 'failed'})
-                            yield f"data: {result}\n\n"
-            
-            yield f"data: {json.dumps({'type': 'complete', 'success_count': success_count, 'total': total_products})}\n\n"
-            
+                            yield f"data: {json.dumps({'type': 'product_error', 'collection': collection_name, 'product': product['title']})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'complete', 'success_count': success_count, 'total': total_products, 'collections': total_collections, 'message': 'Smart Collections will auto-populate! Check your Shopify store.'})}\n\n"
+
         except PermissionError as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'is_permission_error': True})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-    
+
     response = Response(stream_with_context(generate()), mimetype='text/event-stream')
     response.headers['Cache-Control'] = 'no-cache'
     response.headers['X-Accel-Buffering'] = 'no'
     return response
 
-def create_or_get_collection(collection_name, shop_url, headers):
-    """Create or get collection with retry logic"""
+def create_or_get_smart_collection(collection_name, shop_url, headers):
+    """Create or get SMART collection with rules based on product_type"""
     max_retries = 3
-    
+
     # Use stable API version compatible with most stores
     api_version = '2024-10'
-    
+
     for attempt in range(max_retries):
         try:
-            # Search for existing collection
-            search_url = f"https://{shop_url}/admin/api/{api_version}/custom_collections.json"
+            # Search for existing smart collection
+            search_url = f"https://{shop_url}/admin/api/{api_version}/smart_collections.json"
             response = requests.get(search_url, headers=headers, timeout=30)
-            
+
             # Handle rate limiting
             if response.status_code == 429:
                 retry_after = int(response.headers.get('Retry-After', 2))
                 print(f"Rate limit hit, waiting {retry_after} seconds...")
                 time.sleep(retry_after)
                 continue
-            
+
             response.raise_for_status()
-            
+
             search_data = response.json()
-            if "custom_collections" not in search_data:
+            if "smart_collections" not in search_data:
                 print(f"Unexpected search response: {search_data}")
                 if "errors" in search_data:
                     print(f"API Errors: {search_data['errors']}")
@@ -1362,56 +1353,57 @@ def create_or_get_collection(collection_name, shop_url, headers):
                     time.sleep(2 * (attempt + 1))
                     continue
                 return None
-            
-            collections = search_data.get("custom_collections", [])
+
+            collections = search_data.get("smart_collections", [])
             for col in collections:
                 if col["title"].lower() == collection_name.lower():
-                    print(f"Found existing collection: {collection_name} (ID: {col['id']})")
+                    print(f"✓ Found existing Smart Collection: {collection_name} (ID: {col['id']})")
                     return col["id"]
-            
-            # Create new collection
-            create_url = f"https://{shop_url}/admin/api/{api_version}/custom_collections.json"
+
+            # Create new SMART collection with rule: product_type equals collection_name
+            create_url = f"https://{shop_url}/admin/api/{api_version}/smart_collections.json"
             payload = {
-                "custom_collection": {
+                "smart_collection": {
                     "title": collection_name,
-                    "published": True
+                    "published": True,
+                    "rules": [
+                        {
+                            "column": "type",  # product_type field
+                            "relation": "equals",
+                            "condition": collection_name  # Exact match
+                        }
+                    ],
+                    "disjunctive": False  # Must match all rules (only one rule, so strict match)
                 }
             }
-            
+
             # Debug logging
-            print(f"\n[CREATE COLLECTION DEBUG]")
-            print(f"  URL: {create_url}")
-            print(f"  Method: POST")
-            print(f"  Payload: {json.dumps(payload)}")
-            print(f"  Headers: {list(headers.keys())}")
-            
+            print(f"\n[CREATE SMART COLLECTION]")
+            print(f"  Collection: {collection_name}")
+            print(f"  Rule: product_type EQUALS '{collection_name}'")
+
             time.sleep(0.5)  # Rate limiting
             response = requests.post(create_url, headers=headers, json=payload, timeout=30)
-            
-            print(f"  Response Status: {response.status_code}")
-            print(f"  Response Headers: {dict(response.headers)}")
-            print(f"  Response Body (first 500 chars): {response.text[:500]}")
-            
+
             if response.status_code == 429:
                 retry_after = int(response.headers.get('Retry-After', 2))
                 print(f"Rate limit hit, waiting {retry_after} seconds...")
                 time.sleep(retry_after)
                 continue
-            
+
             response.raise_for_status()
-            
+
             response_data = response.json()
-            if "custom_collection" not in response_data:
-                print(f"Unexpected response creating collection {collection_name}")
-                print(f"Status: {response.status_code}, Response keys: {list(response_data.keys())}")
-                
+            if "smart_collection" not in response_data:
+                print(f"Unexpected response creating Smart Collection {collection_name}")
+                print(f"Status: {response.status_code}, Response: {response.text[:500]}")
+
                 # Check if it's a permissions issue
-                if "custom_collections" in response_data:
+                if "errors" in response_data:
                     error_msg = (
-                        f"PERMISSION ERROR: Cannot create collection '{collection_name}'. "
+                        f"PERMISSION ERROR: Cannot create Smart Collection '{collection_name}'. "
                         f"Your Shopify API token is missing the 'write_collections' scope. "
-                        f"Please go to your Shopify Admin → Apps → Your Custom App → Configuration "
-                        f"and add 'write_collections' and 'read_collections' permissions, then generate a new access token."
+                        f"Please verify your app has read_products and write_products scopes."
                     )
                     print(f"ERROR: {error_msg}")
                     raise PermissionError(error_msg)
@@ -1419,61 +1411,36 @@ def create_or_get_collection(collection_name, shop_url, headers):
                     time.sleep(2 * (attempt + 1))
                     continue
                 return None
-            
-            collection_id = response_data["custom_collection"]["id"]
-            print(f"Created new collection: {collection_name} (ID: {collection_id})")
+
+            collection_id = response_data["smart_collection"]["id"]
+            print(f"✓ Created Smart Collection: {collection_name} (ID: {collection_id})")
+            print(f"  → Auto-populates products with product_type = '{collection_name}'")
             return collection_id
-            
+
         except requests.exceptions.Timeout:
-            print(f"Timeout creating collection {collection_name}, attempt {attempt + 1}/{max_retries}")
+            print(f"Timeout creating Smart Collection {collection_name}, attempt {attempt + 1}/{max_retries}")
             if attempt < max_retries - 1:
                 time.sleep(2 * (attempt + 1))
                 continue
-                
+
         except Exception as e:
-            print(f"Error creating/getting collection {collection_name}: {str(e)}")
+            print(f"Error creating/getting Smart Collection {collection_name}: {str(e)}")
             if attempt < max_retries - 1:
                 time.sleep(2 * (attempt + 1))
                 continue
-    
+
     return None
 
-def add_product_to_collection(product_id, collection_id, collection_name, shop_url, headers):
-    """Add product to collection and update product tags/type with retry logic and rate limiting"""
+def update_product_metadata(product_id, collection_name, product_title, shop_url, headers):
+    """Update product with EXACT collection name as both tag and product_type.
+    Smart Collections will auto-populate based on product_type match."""
     max_retries = 3
     retry_delay = 1  # seconds
-    api_version = '2024-10'  # Match the version used in create_or_get_collection
+    api_version = '2024-10'
 
     for attempt in range(max_retries):
         try:
-            # STEP 1: Add product to collection
-            url = f"https://{shop_url}/admin/api/{api_version}/collects.json"
-            payload = {
-                "collect": {
-                    "product_id": product_id,
-                    "collection_id": collection_id
-                }
-            }
-
-            # Rate limiting: Shopify allows 2 req/sec
-            time.sleep(0.5)  # 500ms delay = max 2 req/sec
-
-            response = requests.post(url, headers=headers, json=payload, timeout=30)
-
-            # 422 = product already in collection (success)
-            if response.status_code == 422:
-                print(f"Product {product_id} already in collection {collection_id}")
-            elif response.status_code == 429:
-                # 429 = rate limit hit, retry with longer delay
-                retry_after = int(response.headers.get('Retry-After', 2))
-                print(f"Rate limit hit, waiting {retry_after} seconds...")
-                time.sleep(retry_after)
-                continue
-            else:
-                response.raise_for_status()
-
-            # STEP 2: Update product tags and product type
-            # First, get the current product data
+            # Get current product data
             product_url = f"https://{shop_url}/admin/api/{api_version}/products/{product_id}.json"
             time.sleep(0.5)  # Rate limiting
 
@@ -1488,32 +1455,26 @@ def add_product_to_collection(product_id, collection_id, collection_name, shop_u
             get_response.raise_for_status()
             product_data = get_response.json().get('product', {})
 
-            # Get existing tags and add collection name if not already present
+            # Get existing tags
             existing_tags = product_data.get('tags', '')
             tag_list = [tag.strip() for tag in existing_tags.split(',') if tag.strip()]
 
-            # Add full collection name as tag if not already present
+            # CRITICAL: Add EXACT collection name as tag
             if collection_name not in tag_list:
                 tag_list.append(collection_name)
 
-            # Extract subcategory for product_type (cleaner than full "Parent > Subcategory")
-            if " > " in collection_name:
-                parent_name, subcategory_name = collection_name.split(" > ", 1)
-                product_type_value = subcategory_name  # Use just subcategory for product_type
-                # Also add parent as a tag for filtering
-                if parent_name not in tag_list:
-                    tag_list.append(parent_name)
-            else:
-                product_type_value = collection_name
-
             updated_tags = ', '.join(tag_list)
 
-            # Update product with new tags and product type
+            # CRITICAL: Set product_type to EXACT collection name
+            # This is what Smart Collections will match against!
+            product_type_value = collection_name
+
+            # Update product with exact collection name as both tag and type
             update_payload = {
                 "product": {
                     "id": product_id,
                     "tags": updated_tags,
-                    "product_type": product_type_value
+                    "product_type": product_type_value  # EXACT match for Smart Collection rule
                 }
             }
 
@@ -1527,26 +1488,26 @@ def add_product_to_collection(product_id, collection_id, collection_name, shop_u
                 continue
 
             update_response.raise_for_status()
-            print(f"✓ Product {product_id}: added tags ('{parent_name if ' > ' in collection_name else ''}', '{collection_name}') and set product_type to '{product_type_value}'")
+            print(f"✓ '{product_title[:50]}...' → product_type = '{product_type_value}'")
 
             return True
 
         except requests.exceptions.Timeout:
-            print(f"Timeout adding product {product_id}, attempt {attempt + 1}/{max_retries}")
+            print(f"Timeout updating product {product_id}, attempt {attempt + 1}/{max_retries}")
             if attempt < max_retries - 1:
-                time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+                time.sleep(retry_delay * (attempt + 1))
                 continue
             return False
 
         except requests.exceptions.RequestException as e:
-            print(f"Error adding product {product_id} to collection {collection_id}: {str(e)}")
+            print(f"Error updating product {product_id}: {str(e)}")
             if attempt < max_retries - 1:
                 time.sleep(retry_delay * (attempt + 1))
                 continue
             return False
 
         except Exception as e:
-            print(f"Unexpected error adding product {product_id}: {str(e)}")
+            print(f"Unexpected error updating product {product_id}: {str(e)}")
             return False
 
     return False
