@@ -1432,8 +1432,11 @@ def create_or_get_smart_collection(collection_name, shop_url, headers):
     return None
 
 def update_product_metadata(product_id, collection_name, product_title, shop_url, headers):
-    """Update product with EXACT collection name as both tag and product_type.
-    Smart Collections will auto-populate based on product_type match."""
+    """Update product with ONLY the collection name as tag (replaces all existing tags).
+    Also sets product_type to the exact collection name.
+    Smart Collections will auto-populate based on product_type match.
+
+    IMPORTANT: This replaces ALL existing tags with ONLY the collection name."""
     max_retries = 3
     retry_delay = 1  # seconds
     api_version = '2024-10'
@@ -1455,15 +1458,9 @@ def update_product_metadata(product_id, collection_name, product_title, shop_url
             get_response.raise_for_status()
             product_data = get_response.json().get('product', {})
 
-            # Get existing tags
-            existing_tags = product_data.get('tags', '')
-            tag_list = [tag.strip() for tag in existing_tags.split(',') if tag.strip()]
-
-            # CRITICAL: Add EXACT collection name as tag
-            if collection_name not in tag_list:
-                tag_list.append(collection_name)
-
-            updated_tags = ', '.join(tag_list)
+            # CRITICAL: Set ONLY the collection name as the tag (replace all existing tags)
+            # Each product gets ONLY ONE tag = the exact collection name
+            updated_tags = collection_name
 
             # CRITICAL: Set product_type to EXACT collection name
             # This is what Smart Collections will match against!
@@ -1488,7 +1485,7 @@ def update_product_metadata(product_id, collection_name, product_title, shop_url
                 continue
 
             update_response.raise_for_status()
-            print(f"✓ '{product_title[:50]}...' → product_type = '{product_type_value}'")
+            print(f"✓ '{product_title[:50]}...' → tag = '{collection_name}' | product_type = '{product_type_value}'")
 
             return True
 
